@@ -3,4 +3,4 @@ project(Craft)
 
 set(CMAKE_CXX_STANDARD 20)
 
-add_executable(Craft main.cpp XML.hpp xmltest.hpp Util.hpp)
+add_executable(Craft main.cpp XML.hpp xmltest.hpp Util.hpp testttt.hpp)

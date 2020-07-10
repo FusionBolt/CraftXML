@@ -17,116 +17,139 @@
 
 namespace Craft
 {
+    class XMLParser;
+
     class XMLElement
     {
-    public:
-        using XMLElementIterator = std::vector<XMLElement*>::iterator;
-        using XMLElements = std::vector<XMLElement*>;
+    protected:
+        class XMLElementStruct;
+        friend class XMLParser;
+        XMLElement(XMLElementStruct* element):_element(element){}
 
-        XMLElement(std::string tag = "", std::string context = "", XMLElement *parent = nullptr) :
-                _tag(std::move(tag)), _context(std::move(context)), _parent(parent)
-        {
-            if (parent != nullptr)
-            {
-                parent->AddChild(this);
-            }
-        }
+    public:
+        using XMLElementIterator = std::vector<XMLElement>::iterator;
+        using XMLElements = std::vector<XMLElement>;
+
+        XMLElement(std::string tag = "", std::string context = ""):
+                _element(new XMLElementStruct(std::move(tag), std::move(context), nullptr))
+        {}
 
         virtual ~XMLElement() = default;
 
-        XMLElementIterator begin()
+        XMLElementIterator begin() noexcept
         {
-            return _childs.begin();
+            return _element->_children.begin();
         }
 
-        XMLElementIterator end()
+        XMLElementIterator end() noexcept
         {
-            return _childs.end();
+            return _element->_children.end();
         }
 
-        std::string GetTag()
+        [[nodiscard]] std::string GetTag() const
         {
-            return _tag;
+            return _element->_tag;
         }
 
-        bool HasChild()
+        [[nodiscard]] std::string GetContext() const
         {
-            return !_childs.empty();
+            return _element->_context;
         }
 
-        void AddChild(XMLElement *child)
+        [[nodiscard]] std::map<std::string, std::string> GetAttribute() const
         {
-            _childs.push_back(child);
-            child->_parent = this;
+            return _element->_attributes;
+        }
+
+        [[nodiscard]] bool HasChild() const noexcept
+        {
+            return !_element->_children.empty();
+        }
+
+        void AddChild(XMLElement& child)
+        {
+            assert(child._element != nullptr);
+            child.SetParent(*this);
         }
 
         void AddAttribute(const std::string &name, const std::string &value)
         {
-            _attributes[name] = value;
+            _element->_attributes[name] = value;
         }
 
-        std::vector<XMLElement *> Childs()
+        [[nodiscard]] std::vector<XMLElement> Children() const
         {
-            return _childs;
+            return _element->_children;
         }
 
-        void SetParent(XMLElement *parent)
+        void SetParent(XMLElement& parent)
         {
-            _parent = parent;
-            parent->_childs.push_back(this);
+            assert(parent._element != nullptr);
+            _element->_parent = parent._element;
+            parent._element->_children.push_back(*this);
         }
 
-        XMLElement *GetParent()
+        XMLElement GetParent() const noexcept
         {
-            return _parent;
+            return XMLElement(_element->_parent);
         }
 
         void SetContext(std::string context)
         {
-            _context = std::move(context);
+            _element->_context = std::move(context);
         }
 
-        XMLElements FindChildByTagName(const std::string& tagName)
+        [[nodiscard]] XMLElement FirstChild() const
         {
-            XMLElements childs;
-            for(auto& child : _childs)
+            return _element->_children[0];
+        }
+
+        [[nodiscard]] XMLElements FindChildByTagName(const std::string& tagName) const
+        {
+            XMLElements children;
+            for(auto& child : _element->_children)
             {
-                if(child->GetTag() == "tagName")
+                if(child.GetTag() == tagName)
                 {
-                    childs.push_back(child);
+                    children.push_back(child);
                 }
             }
-            return childs;
+            return children;
         }
 
-        std::string StringValue()
+        [[nodiscard]] std::string StringValue() const
         {
-            return _context;
+            return _element->_context;
         }
 
-        void output()
+        void output() const noexcept
         {
-            for (auto &c : _childs)
+            for (auto &c : _element->_children)
             {
-                std::cout << "<" << c->_tag << ">" << std::endl;
-                std::cout << c->_context << std::endl;
-                c->output();
-                std::cout << "<\\" << c->_tag << ">" << std::endl;
+                std::cout << "<" << c._element->_tag << ">" << std::endl;
+                std::cout << c._element->_context << std::endl;
+                c.output();
+                std::cout << "<\\" << c._element->_tag << ">" << std::endl;
             }
         }
 
-        std::map<std::string, std::string> _attributes;
-        std::string _tag, _context;
-        XMLElements _childs;
-        XMLElement *_parent;
+    protected:
+        struct XMLElementStruct
+        {
+            XMLElementStruct() = default;
+
+            XMLElementStruct(std::string tag, std::string context, XMLElementStruct* parent):
+                    _tag(std::move(tag)), _context(std::move(context)), _parent(parent)
+            {}
+
+            std::map<std::string, std::string> _attributes;
+            std::string _tag, _context;
+            XMLElements _children;
+            XMLElementStruct *_parent;
+        };
+
+        XMLElementStruct* _element;
     };
-
-    inline void Boom(const std::string &info, int i = 0)
-    {
-        std::cout << "Error:" << info << "index:" << i << std::endl;
-        //exit(-1);
-    }
-
 
     class XMLParser
     {
@@ -139,27 +162,25 @@ namespace Craft
             NullTagError,
             CommentError,
             TagNestedError,
-            AttributeError,
-
+            AttributeSyntaxError,
         };
 
         XMLParser() = default;
 
-        XMLElement *ParseFile(const std::string &fileName)
+        XMLElement ParseFile(const std::string &fileName)
         {
             std::ifstream file(fileName, std::ios::in);
             if (!file.is_open())
             {
-                std::cout << "Error:can't open file" << std::endl;
                 _status = FileOpenFailed;
-                return nullptr;
+                return XMLElement();
             }
             std::string contents((std::istreambuf_iterator<char>(file)),
-                    std::istreambuf_iterator<char>());
+                                 std::istreambuf_iterator<char>());
             return _Parse(contents);
         }
 
-        XMLElement *ParseString(const std::string &XMLString)
+        XMLElement ParseString(const std::string &XMLString)
         {
             return _Parse(XMLString);
         }
@@ -172,17 +193,16 @@ namespace Craft
     private:
         ParseStatus _status = NoError;
 
-        XMLElement *_Parse(const std::string &XMLString)
+        XMLElement _Parse(const std::string &XMLString)
         {
             auto contents = XMLString;
             auto i = contents.find_first_not_of(' ');
 
             //TODO: XML declaration Parse
-            auto root = new XMLElement();
+            auto root = XMLElement();
             if (contents[i] != '<')
             {
                 _status = TagSyntaxError;
-                Boom("syntax error", i);
                 return root;
             }
             std::stack<std::string> tagStack;
@@ -205,7 +225,7 @@ namespace Craft
                             ++i;
                         }
                         auto stackTop = tagStack.top();
-                        std::cout << "last:" << tag << " stackTop:" << stackTop << std::endl;
+                        // std::cout << "last:" << tag << " stackTop:" << stackTop << std::endl;
                         if (tag != stackTop)
                         {
                             _status = TagNestedError;
@@ -214,15 +234,19 @@ namespace Craft
                         }
                         tagStack.pop();
                         ++i;
-
-                        if (current->HasChild())
+                        if(current.GetTag().empty())
                         {
-                            // if not leaf node, then clear context
-                            std::cout << "current text:" << current->_context << ":end" << std::endl;
-                            current->SetContext("");
+                            _status = NullTagError;
+                            return root;
                         }
-
-                        current = current->GetParent();
+                        if (current.HasChild())
+                        {
+                            // TODO:Bug ,not leaf node also can have context
+                            // if not leaf node, then clear context
+                            // std::cout << "current text:" << current->GetContext() << ":end" << std::endl;
+                            current.SetContext("");
+                        }
+                        current = current.GetParent();
                         continue;
                     }
 
@@ -248,6 +272,11 @@ namespace Craft
                     // read start tag name
                     while (contents[i] != '>' && contents[i] != ' ')
                     {
+                        if(i > contents.size())
+                        {
+                            _status = TagBadCloseError;
+                            return root;
+                        }
                         //TODO: tag name can't have symbol
                         if (contents[i] == '<')
                         {
@@ -260,16 +289,16 @@ namespace Craft
                     }
 
                     tagStack.push(tag);
-                    std::cout << "tag:" << tag << std::endl;
-                    auto newNode = new XMLElement(tag);
-
+                    // std::cout << "tag:" << tag << std::endl;
+                    auto newNode = XMLElement(tag);
+                    // TODO: Attribute can have space
                     // TODO: Attribute is unique
                     // Repeat read Attribute
                     while(contents[i] == ' ')
                     {
                         std::string attributeName;
                         std::string attributeValue;
-                        // read space
+                        // read space between tag and attribute name
                         while (contents[i] == ' ')
                         {
                             ++i;
@@ -297,19 +326,24 @@ namespace Craft
                             }
                             else
                             {
-                                _status = AttributeError;
+                                _status = AttributeSyntaxError;
                                 // Boom("attribute syntax error");
                                 return root;
                             }
                             // TODO:repeat attribute is error
-                            newNode->AddAttribute(attributeName, attributeValue);
+                            newNode.AddAttribute(attributeName, attributeValue);
+                        }
+                        else
+                        {
+                            _status = AttributeSyntaxError;
+                            return root;
                         }
                     }
 
                     // tag end by >
                     if(contents[i] == '>')
                     {
-                        current->AddChild(newNode);
+                        current.AddChild(newNode);
                         current = newNode;
                         ++i;
                     }
@@ -321,7 +355,7 @@ namespace Craft
                     }
 
                 }
-                // content start
+                    // content start
                 else
                 {
                     // read until '<' (tag start)
@@ -332,29 +366,30 @@ namespace Craft
                         text.push_back(contents[i]);
                         ++i;
                     }
-                    if(text.empty())
-                    {
-                        _status = NullTagError;
-                        //Boom("null tag");
-                        return root;
-                    }
+//                    if(text.empty())
+//                    {
+//                        _status = NullTagError;
+//                        //Boom("null tag");
+//                        return root;
+//                    }
                     std::cout << "text:" << text << std::endl;
-                    current->SetContext(text);
+                    current.SetContext(text);
                 }
             }
 
-            if (current != root)
+            if (current._element != root._element)
             {
                 _status = TagNestedError;
                 // Boom("tag level mismatch");
                 return root;
             }
 
-            root->_context.clear();
-            assert(root->_parent == nullptr);
-            assert(root->_tag.empty());
-            assert(root->_context.empty());
-            assert(root->_attributes.empty());
+            // TODO: 转换为布尔值判断，是否为空
+            root.SetContext("");
+            assert(root.GetParent()._element == nullptr);
+            assert(root.GetTag().empty());
+            assert(root.GetContext().empty());
+            assert(root.GetAttribute().empty());
             return root;
         }
 
@@ -367,7 +402,8 @@ namespace Craft
         {
             XMLParser parser;
             auto root = parser.ParseFile(fileName);
-            _childs = root->Childs();
+            // except children, other member don't changed
+            _element->_children = root.Children();
             return parser.Status();
         }
 
@@ -375,11 +411,11 @@ namespace Craft
         {
             XMLParser parser;
             auto root = parser.ParseString(str);
-            _childs = root->Childs();
+            _element->_children = root.Children();
             return parser.Status();
         }
 
-        void Write(XMLElement* root);
+        void Write(XMLElement root);
     };
 }
 #endif //CRAFT_XML_HPP
