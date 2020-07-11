@@ -31,7 +31,7 @@ namespace Craft
         using XMLElements = std::vector<XMLElement>;
 
         XMLElement(std::string tag = "", std::string context = ""):
-                _element(new XMLElementStruct(std::move(tag), std::move(context), nullptr))
+                _element(new XMLElementStruct(std::move(tag), std::move(context)))
         {}
 
         virtual ~XMLElement() = default;
@@ -66,6 +66,7 @@ namespace Craft
             return !_element->_children.empty();
         }
 
+        // TODO:element not nullptr and parent nullptr, what should I do
         void AddChild(XMLElement& child)
         {
             assert(child._element != nullptr);
@@ -89,7 +90,7 @@ namespace Craft
             parent._element->_children.push_back(*this);
         }
 
-        XMLElement GetParent() const noexcept
+        [[nodiscard]] XMLElement GetParent() const noexcept
         {
             return XMLElement(_element->_parent);
         }
@@ -102,6 +103,20 @@ namespace Craft
         [[nodiscard]] XMLElement FirstChild() const
         {
             return _element->_children[0];
+        }
+
+        // TODO:重载[]
+        XMLElement FindFirstChildByTagName(const std::string& tagName) const
+        {
+            // TODO:标准库算法替换
+            for(auto& child : _element->_children)
+            {
+                if(child.GetTag() == tagName)
+                {
+                    return child;
+                }
+            }
+            return XMLElement();
         }
 
         [[nodiscard]] XMLElements FindChildByTagName(const std::string& tagName) const
@@ -138,7 +153,7 @@ namespace Craft
         {
             XMLElementStruct() = default;
 
-            XMLElementStruct(std::string tag, std::string context, XMLElementStruct* parent):
+            XMLElementStruct(std::string tag, std::string context, XMLElementStruct* parent = nullptr):
                     _tag(std::move(tag)), _context(std::move(context)), _parent(parent)
             {}
 
@@ -151,6 +166,9 @@ namespace Craft
         XMLElementStruct* _element;
     };
 
+
+    class XMLParserResult;
+
     class XMLParser
     {
     public:
@@ -160,9 +178,12 @@ namespace Craft
             TagSyntaxError,
             TagBadCloseError,
             NullTagError,
-            CommentError,
-            TagNestedError,
+            CommentSyntaxError,
+            TagNotMatchedError,
             AttributeSyntaxError,
+            AttributeRepeatError,
+            DeclarationSyntaxError,
+            DeclarationPositionError
         };
 
         XMLParser() = default;
@@ -190,21 +211,73 @@ namespace Craft
             return _status;
         }
 
+        int ErrorIndex()
+        {
+            return _errorIndex;
+        }
+
     private:
         ParseStatus _status = NoError;
+
+        int _errorIndex = -1;
+
+        struct XMLDeclarationInfo
+        {
+            XMLDeclarationInfo() = default;
+
+            std::string _version, _encoding, _standalone;
+            XMLDeclarationInfo(std::string version, std::string encoding, std::string standalone)
+            {
+
+            }
+        };
+
+        XMLDeclarationInfo _declarationInfo;
+
+        bool _IsNameChar(char c) const
+        {
+            // TODO:constexpr and Blank
+            // TODO:change judge is character or number or - or .
+            return std::string(R"(!"#$%&'()*+,/;<=>?@[\]^`{|}~ )").find(c) == std::string::npos;
+        }
+
+        // TODO:declaration
+        // must have version
+        // spell sensitive
+        // order must be version encoding standalone
+        // use " or '
+        int _ParseDeclaration(const std::string &XMLString, int index)
+        {
+            return index;
+        }
+
+        // in XML, \t \r \n space are blank character
+        bool _IsBlankChar(char c)
+        {
+            return std::string("\t\r\n ").find(c) != std::string::npos;
+        }
 
         XMLElement _Parse(const std::string &XMLString)
         {
             auto contents = XMLString;
-            auto i = contents.find_first_not_of(' ');
+            auto i = contents.find_first_not_of("\t\r\n ");
 
-            //TODO: XML declaration Parse
             auto root = XMLElement();
+            // not error, only space in file
+            if(i == std::string::npos)
+            {
+                _status = NoError;
+                return root;
+            }
             if (contents[i] != '<')
             {
                 _status = TagSyntaxError;
+                _errorIndex = i;
                 return root;
             }
+
+            i = _ParseDeclaration(XMLString, i);
+
             std::stack<std::string> tagStack;
             auto current = root;
             while (i < contents.size())
@@ -215,21 +288,43 @@ namespace Craft
                 if (contents[i] == '<')
                 {
                     ++i;
+                    // declaration must be first line which not null
+                    if (contents[i] == '?')
+                    {
+                        _status = DeclarationPositionError;
+                        return root;
+                    }
+
                     // end tag
                     if (contents[i] == '/')
                     {
                         ++i;
-                        while (contents[i] != '>')
+                        // < (space)* /
+                        while(_IsBlankChar(contents[i]))
+                        {
+                            ++i;
+                        }
+                        // while (contents[i] != '>' && contents[i] != ' ')
+                        while (_IsNameChar(contents[i]))
                         {
                             tag.push_back(contents[i]);
                             ++i;
                         }
+                        // </tag (space)* >
+                        while(_IsBlankChar(contents[i]))
+                        {
+                            ++i;
+                        }
+                        if(contents[i] != '>')
+                        {
+                            _status = TagBadCloseError;
+                            return root;
+                        }
                         auto stackTop = tagStack.top();
-                        // std::cout << "last:" << tag << " stackTop:" << stackTop << std::endl;
                         if (tag != stackTop)
                         {
-                            _status = TagNestedError;
-                            // Boom("</tag> error", i);
+                            _status = TagNotMatchedError;
+                            _errorIndex = i;
                             return root;
                         }
                         tagStack.pop();
@@ -237,14 +332,8 @@ namespace Craft
                         if(current.GetTag().empty())
                         {
                             _status = NullTagError;
+                            _errorIndex = i;
                             return root;
-                        }
-                        if (current.HasChild())
-                        {
-                            // TODO:Bug ,not leaf node also can have context
-                            // if not leaf node, then clear context
-                            // std::cout << "current text:" << current->GetContext() << ":end" << std::endl;
-                            current.SetContext("");
                         }
                         current = current.GetParent();
                         continue;
@@ -253,91 +342,142 @@ namespace Craft
                     // comment
                     if (contents[i] == '!')
                     {
-                        auto comment = contents.find("<!--", i - 1) + 4;
+                        auto comment = contents.find("<!--", i - 1);
                         if (comment == std::string::npos)
                         {
-                            _status = CommentError;
-                            //Boom("comment syntax error", i);
+                            _status = CommentSyntaxError;
+                            _errorIndex = i;
                             return root;
                         }
-                        i = contents.find("-->", comment) + 3;
-                        // if nops
+
+                        i = contents.find("-->", comment + 4);
+                        if(i == std::string::npos)
+                        {
+                            break;
+                        }
+                        else
+                        {
+                            i = i + 3;
+                        }
                         ++i;
                         if (i >= contents.size())
                         {
                             break;
                         }
+                        continue;
                     }
 
+                    // new tag start
                     // read start tag name
                     while (contents[i] != '>' && contents[i] != ' ')
                     {
                         if(i > contents.size())
                         {
                             _status = TagBadCloseError;
+                            _errorIndex = i;
                             return root;
                         }
-                        //TODO: tag name can't have symbol
-                        if (contents[i] == '<')
+                        if (!_IsNameChar(contents[i]))
                         {
                             _status = TagSyntaxError;
-                            // Boom("syntax error, double <", i);
+                            _errorIndex = i;
                             return root;
                         }
                         tag.push_back(contents[i]);
                         ++i;
                     }
-
                     tagStack.push(tag);
                     // std::cout << "tag:" << tag << std::endl;
                     auto newNode = XMLElement(tag);
-                    // TODO: Attribute can have space
-                    // TODO: Attribute is unique
+
                     // Repeat read Attribute
-                    while(contents[i] == ' ')
+                    while(_IsBlankChar(contents[i]))
                     {
                         std::string attributeName;
                         std::string attributeValue;
                         // read space between tag and attribute name
-                        while (contents[i] == ' ')
+                        while (_IsBlankChar(contents[i]))
                         {
                             ++i;
                         }
-                        if (contents[i] != '>')
+                        if (contents[i] != '>' && contents[i] != '/')
                         {
                             // Attribute Name
-                            while (contents[i] != '=')
+                            // name(space)*=(space)*\"content\"
+                            // while (contents[i] != '=' || contents[i] != ' ')
+                            while(_IsNameChar(contents[i]))
                             {
                                 attributeName.push_back(contents[i]);
                                 ++i;
                             }
-                            ++i;
-
-                            // Attribute Value
-                            if (contents[i] == '"')
+                            // read (space)*
+                            while(contents[i] != '=')
                             {
-                                ++i;
-                                while (contents[i] != '"')
+                                if(contents[i] != ' ')
                                 {
-                                    attributeValue.push_back(contents[i]);
-                                    ++i;
+                                    _status = AttributeSyntaxError;
+                                    _errorIndex = i;
+                                    return root;
                                 }
                                 ++i;
                             }
-                            else
+                            ++i;
+                            while(contents[i] != '"' && contents[i] != '\'')
                             {
-                                _status = AttributeSyntaxError;
-                                // Boom("attribute syntax error");
+                                if(contents[i] != ' ')
+                                {
+                                    _status = AttributeSyntaxError;
+                                    _errorIndex = i;
+                                    return root;
+                                }
+                                ++i;
+                            }
+                            ++i;
+                            // TODO:内容有什么限制
+                            // Attribute Value
+                            while (contents[i] != '"' && contents[i] != '\'')
+                            {
+                                attributeValue.push_back(contents[i]);
+                                ++i;
+                            }
+                            ++i;
+
+                            //repeat attribute
+                            auto attr = newNode.GetAttribute();
+                            if(attr.find(attributeName) != attr.end())
+                            {
+                                _status = AttributeRepeatError;
+                                _errorIndex = i;
                                 return root;
                             }
-                            // TODO:repeat attribute is error
                             newNode.AddAttribute(attributeName, attributeValue);
+                        }
+                        // scanf to tag eng
+                        else
+                        {
+                            // to end
+                            break;
+                        }
+                    }
+
+                    // one tag, not one pair tag
+                    if(contents[i] == '/')
+                    {
+                        // tag end
+                        ++i;
+                        if(contents[i] == '>')
+                        {
+                            current.AddChild(newNode);
+                            tagStack.pop();
+                            ++i;
                         }
                         else
                         {
-                            _status = AttributeSyntaxError;
+                            _status = TagBadCloseError;
+                            _errorIndex = i;
                             return root;
                         }
+                        continue;
                     }
 
                     // tag end by >
@@ -346,45 +486,59 @@ namespace Craft
                         current.AddChild(newNode);
                         current = newNode;
                         ++i;
+                        continue;
                     }
                     else
                     {
                         // > can't match
                         _status = TagBadCloseError;
+                        _errorIndex = i;
                         return root;
                     }
 
                 }
-                    // content start
+                // content start
                 else
                 {
-                    // read until '<' (tag start)
-                    // TODO: if contents contain '<'
+                    // read until '<' (next tag start)
+                    // TODO: escape characters
                     // TODO: all while read, judge i < contents.size() | refactor
+                    // TODO: about white space
+                    bool setNull = true;
                     while (contents[i] != '<' && i < contents.size())
                     {
+                        // TODO:different breakline symbol
+                        // other space character
+                        // if only blank character then context set ""
+                        // TODO:compare with find_first_of("")
+                        if(!_IsBlankChar(contents[i]))
+                        {
+                            setNull = false;
+                        }
                         text.push_back(contents[i]);
                         ++i;
                     }
-//                    if(text.empty())
-//                    {
-//                        _status = NullTagError;
-//                        //Boom("null tag");
-//                        return root;
-//                    }
-                    std::cout << "text:" << text << std::endl;
-                    current.SetContext(text);
+
+                    // TODO:compare with text=""; SetContext(text);
+                    if(setNull)
+                    {
+                        current.SetContext("");
+                    }
+                    else
+                    {
+                        current.SetContext(text);
+                    }
+
                 }
             }
 
             if (current._element != root._element)
             {
-                _status = TagNestedError;
-                // Boom("tag level mismatch");
+                _status = TagNotMatchedError;
+                _errorIndex = i;
                 return root;
             }
 
-            // TODO: 转换为布尔值判断，是否为空
             root.SetContext("");
             assert(root.GetParent()._element == nullptr);
             assert(root.GetTag().empty());
@@ -395,24 +549,35 @@ namespace Craft
 
     };
 
+    class XMLParserResult
+    {
+    public:
+        XMLParserResult(XMLParser::ParseStatus status, int errorIndex) :
+            _status(status), _errorIndex(errorIndex)
+        {}
+        XMLParser::ParseStatus _status;
+        int _errorIndex;
+    };
+
+    // TODO: LoadFile judge is xml file??
     class XMLDocument : public XMLElement
     {
     public:
-        XMLParser::ParseStatus LoadFile(const std::string& fileName)
+        XMLParserResult LoadFile(const std::string& fileName)
         {
             XMLParser parser;
             auto root = parser.ParseFile(fileName);
             // except children, other member don't changed
             _element->_children = root.Children();
-            return parser.Status();
+            return XMLParserResult(parser.Status(), parser.ErrorIndex());
         }
 
-        XMLParser::ParseStatus LoadString(const std::string& str)
+        XMLParserResult LoadString(const std::string& str)
         {
             XMLParser parser;
             auto root = parser.ParseString(str);
             _element->_children = root.Children();
-            return parser.Status();
+            return XMLParserResult(parser.Status(), parser.ErrorIndex());
         }
 
         void Write(XMLElement root);
