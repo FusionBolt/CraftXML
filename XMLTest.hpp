@@ -1,19 +1,22 @@
 //
 // Created by fusionbolt on 2020/7/7.
 //
+#include <iostream>
 
 #include "XML.hpp"
-#include "Util.hpp"
 
 using namespace Craft;
 
 #define LOAD_STRING(str) XMLDocument document; \
                          auto result = document.LoadString(str); \
-                         if(result._status != XMLParser::NoError){return false;}
+                         if(result._status != XMLParser::NoError){ \
+                             std::cout << result.ErrorInfo() << std::endl; return false;}
 
 #define LOAD_ERROR_STRING(str, parseStatus) XMLDocument document;\
                                             auto result = document.LoadString(str);\
-                                            return result._status == parseStatus;
+                                            if(result._status != parseStatus)\
+                                            {std::cout << result.ErrorInfo() << std::endl; return false;}\
+                                            else{return true;}
 
 bool OneTagTest1()
 {
@@ -172,7 +175,7 @@ bool TagNotMatchedErrorTest2()
 
 bool TagNotMatchedErrorTest3()
 {
-    LOAD_ERROR_STRING("<tag>", XMLParser::TagNotMatchedError);
+    LOAD_ERROR_STRING("<tag>content", XMLParser::TagNotMatchedError);
 }
 
 bool AttributeSyntaxErrorNoValueTest()

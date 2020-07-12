@@ -23,14 +23,17 @@ namespace Craft
     {
     protected:
         class XMLElementStruct;
+
         friend class XMLParser;
-        XMLElement(XMLElementStruct* element):_element(element){}
+
+        XMLElement(XMLElementStruct *element) : _element(element)
+        {}
 
     public:
         using XMLElementIterator = std::vector<XMLElement>::iterator;
         using XMLElements = std::vector<XMLElement>;
 
-        XMLElement(std::string tag = "", std::string context = ""):
+        XMLElement(std::string tag = "", std::string context = "") :
                 _element(new XMLElementStruct(std::move(tag), std::move(context)))
         {}
 
@@ -67,7 +70,7 @@ namespace Craft
         }
 
         // TODO:element not nullptr and parent nullptr, what should I do
-        void AddChild(XMLElement& child)
+        void AddChild(XMLElement &child)
         {
             assert(child._element != nullptr);
             child.SetParent(*this);
@@ -83,7 +86,7 @@ namespace Craft
             return _element->_children;
         }
 
-        void SetParent(XMLElement& parent)
+        void SetParent(XMLElement &parent)
         {
             assert(parent._element != nullptr);
             _element->_parent = parent._element;
@@ -106,12 +109,14 @@ namespace Craft
         }
 
         // TODO:重载[]
-        XMLElement FindFirstChildByTagName(const std::string& tagName) const
+        // TODO:const return can changed?
+        [[nodiscard]] XMLElement FindFirstChildByTagName(const std::string &tagName) const
         {
             // TODO:标准库算法替换
-            for(auto& child : _element->_children)
+            // performance compare
+            for (auto &child : _element->_children)
             {
-                if(child.GetTag() == tagName)
+                if (child.GetTag() == tagName)
                 {
                     return child;
                 }
@@ -119,12 +124,12 @@ namespace Craft
             return XMLElement();
         }
 
-        [[nodiscard]] XMLElements FindChildByTagName(const std::string& tagName) const
+        [[nodiscard]] XMLElements FindChildByTagName(const std::string &tagName) const
         {
             XMLElements children;
-            for(auto& child : _element->_children)
+            for (auto &child : _element->_children)
             {
-                if(child.GetTag() == tagName)
+                if (child.GetTag() == tagName)
                 {
                     children.push_back(child);
                 }
@@ -153,7 +158,7 @@ namespace Craft
         {
             XMLElementStruct() = default;
 
-            XMLElementStruct(std::string tag, std::string context, XMLElementStruct* parent = nullptr):
+            XMLElementStruct(std::string tag, std::string context, XMLElementStruct *parent = nullptr) :
                     _tag(std::move(tag)), _context(std::move(context)), _parent(parent)
             {}
 
@@ -163,16 +168,20 @@ namespace Craft
             XMLElementStruct *_parent;
         };
 
-        XMLElementStruct* _element;
+        XMLElementStruct *_element;
     };
 
 
     class XMLParserResult;
 
+    constexpr std::string_view SymbolNotUsedInName = R"(!"#$%&'()*+,/;<=>?@[\]^`{|}~ )";
+    constexpr std::string_view Blank = "\t\r\n ";
+
     class XMLParser
     {
     public:
-        enum ParseStatus {
+        enum ParseStatus
+        {
             NoError = 0,
             FileOpenFailed,
             TagSyntaxError,
@@ -198,10 +207,11 @@ namespace Craft
             }
             std::string contents((std::istreambuf_iterator<char>(file)),
                                  std::istreambuf_iterator<char>());
-            return _Parse(contents);
+            std::string_view view = contents;
+            return _Parse(view);
         }
 
-        XMLElement ParseString(const std::string &XMLString)
+        XMLElement ParseString(std::string_view XMLString)
         {
             return _Parse(XMLString);
         }
@@ -226,6 +236,7 @@ namespace Craft
             XMLDeclarationInfo() = default;
 
             std::string _version, _encoding, _standalone;
+
             XMLDeclarationInfo(std::string version, std::string encoding, std::string standalone)
             {
 
@@ -234,11 +245,9 @@ namespace Craft
 
         XMLDeclarationInfo _declarationInfo;
 
-        bool _IsNameChar(char c) const
+        [[nodiscard]] bool _IsNameChar(char c) const
         {
-            // TODO:constexpr and Blank
-            // TODO:change judge is character or number or - or .
-            return std::string(R"(!"#$%&'()*+,/;<=>?@[\]^`{|}~ )").find(c) == std::string::npos;
+            return SymbolNotUsedInName.find(c) == std::string::npos;
         }
 
         // TODO:declaration
@@ -246,7 +255,7 @@ namespace Craft
         // spell sensitive
         // order must be version encoding standalone
         // use " or '
-        int _ParseDeclaration(const std::string &XMLString, int index)
+        int _ParseDeclaration(std::string_view &XMLString, int index)
         {
             return index;
         }
@@ -254,17 +263,29 @@ namespace Craft
         // in XML, \t \r \n space are blank character
         bool _IsBlankChar(char c)
         {
-            return std::string("\t\r\n ").find(c) != std::string::npos;
+            return Blank.find(c) != std::string::npos;
         }
 
-        XMLElement _Parse(const std::string &XMLString)
+        std::string _ReadName(std::string_view contents, size_t &index)
+        {
+            // TODO: index = contents.size()
+            auto first = index;
+            while (_IsNameChar(contents[index]) && index < contents.size())
+            {
+                ++index;
+            }
+            // TODO : if == 0
+            return std::string(contents.substr(first, index - first));
+        }
+
+        XMLElement _Parse(std::string_view XMLString)
         {
             auto contents = XMLString;
-            auto i = contents.find_first_not_of("\t\r\n ");
+            auto i = contents.find_first_not_of(Blank);
 
             auto root = XMLElement();
             // not error, only space in file
-            if(i == std::string::npos)
+            if (i == std::string::npos)
             {
                 _status = NoError;
                 return root;
@@ -276,7 +297,7 @@ namespace Craft
                 return root;
             }
 
-            i = _ParseDeclaration(XMLString, i);
+            //i = _ParseDeclaration(XMLString, i);
 
             std::stack<std::string> tagStack;
             auto current = root;
@@ -284,6 +305,7 @@ namespace Craft
             {
                 std::string tag;
                 std::string text;
+
                 // tag start
                 if (contents[i] == '<')
                 {
@@ -300,22 +322,18 @@ namespace Craft
                     {
                         ++i;
                         // < (space)* /
-                        while(_IsBlankChar(contents[i]))
+                        while (_IsBlankChar(contents[i]))
                         {
                             ++i;
                         }
-                        // while (contents[i] != '>' && contents[i] != ' ')
-                        while (_IsNameChar(contents[i]))
-                        {
-                            tag.push_back(contents[i]);
-                            ++i;
-                        }
+                        // TODO:error process
+                        tag = _ReadName(contents, i);
                         // </tag (space)* >
-                        while(_IsBlankChar(contents[i]))
+                        while (_IsBlankChar(contents[i]))
                         {
                             ++i;
                         }
-                        if(contents[i] != '>')
+                        if (contents[i] != '>')
                         {
                             _status = TagBadCloseError;
                             return root;
@@ -329,7 +347,7 @@ namespace Craft
                         }
                         tagStack.pop();
                         ++i;
-                        if(current.GetTag().empty())
+                        if (current.GetTag().empty())
                         {
                             _status = NullTagError;
                             _errorIndex = i;
@@ -351,7 +369,7 @@ namespace Craft
                         }
 
                         i = contents.find("-->", comment + 4);
-                        if(i == std::string::npos)
+                        if (i == std::string::npos)
                         {
                             break;
                         }
@@ -369,29 +387,30 @@ namespace Craft
 
                     // new tag start
                     // read start tag name
-                    while (contents[i] != '>' && contents[i] != ' ')
+
+
+                    auto oldI = i;
+                    tag = _ReadName(contents, i);
+                    assert(oldI <= i);
+
+                    if(i >= contents.size())
                     {
-                        if(i > contents.size())
-                        {
-                            _status = TagBadCloseError;
-                            _errorIndex = i;
-                            return root;
-                        }
-                        if (!_IsNameChar(contents[i]))
-                        {
-                            _status = TagSyntaxError;
-                            _errorIndex = i;
-                            return root;
-                        }
-                        tag.push_back(contents[i]);
-                        ++i;
+                        _status = TagBadCloseError;
+                        _errorIndex = i;
+                        return root;
                     }
+                    if(!(_IsBlankChar(contents[i]) || contents[i] == '/' || contents[i] == '>'))
+                    {
+                        _status = TagSyntaxError;
+                        _errorIndex = i;
+                        return root;
+                    }
+
                     tagStack.push(tag);
-                    // std::cout << "tag:" << tag << std::endl;
                     auto newNode = XMLElement(tag);
 
                     // Repeat read Attribute
-                    while(_IsBlankChar(contents[i]))
+                    while (_IsBlankChar(contents[i]))
                     {
                         std::string attributeName;
                         std::string attributeValue;
@@ -405,15 +424,12 @@ namespace Craft
                             // Attribute Name
                             // name(space)*=(space)*\"content\"
                             // while (contents[i] != '=' || contents[i] != ' ')
-                            while(_IsNameChar(contents[i]))
-                            {
-                                attributeName.push_back(contents[i]);
-                                ++i;
-                            }
+                            attributeName = _ReadName(contents, i);
+                            // TODO:error process
                             // read (space)*
-                            while(contents[i] != '=')
+                            while (contents[i] != '=')
                             {
-                                if(contents[i] != ' ')
+                                if (contents[i] != ' ')
                                 {
                                     _status = AttributeSyntaxError;
                                     _errorIndex = i;
@@ -422,29 +438,32 @@ namespace Craft
                                 ++i;
                             }
                             ++i;
-                            while(contents[i] != '"' && contents[i] != '\'')
-                            {
-                                if(contents[i] != ' ')
-                                {
-                                    _status = AttributeSyntaxError;
-                                    _errorIndex = i;
-                                    return root;
-                                }
-                                ++i;
-                            }
-                            ++i;
-                            // TODO:内容有什么限制
-                            // Attribute Value
                             while (contents[i] != '"' && contents[i] != '\'')
                             {
-                                attributeValue.push_back(contents[i]);
+                                if (contents[i] != ' ')
+                                {
+                                    _status = AttributeSyntaxError;
+                                    _errorIndex = i;
+                                    return root;
+                                }
                                 ++i;
                             }
+                            ++i;
+                            // Attribute Value
+                            // not restrict
+                            // TODO: " " can contain ', ' ' can contain "
+                            auto firstIndex = i;
+                            while (contents[i] != '"' && contents[i] != '\'')
+                            {
+                                ++i;
+                            }
+                            attributeValue = contents.substr(firstIndex, i - firstIndex);
+                            // judge next char is " or '
                             ++i;
 
                             //repeat attribute
                             auto attr = newNode.GetAttribute();
-                            if(attr.find(attributeName) != attr.end())
+                            if (attr.find(attributeName) != attr.end())
                             {
                                 _status = AttributeRepeatError;
                                 _errorIndex = i;
@@ -452,7 +471,7 @@ namespace Craft
                             }
                             newNode.AddAttribute(attributeName, attributeValue);
                         }
-                        // scanf to tag eng
+                            // scanf to tag eng
                         else
                         {
                             // to end
@@ -461,11 +480,11 @@ namespace Craft
                     }
 
                     // one tag, not one pair tag
-                    if(contents[i] == '/')
+                    if (contents[i] == '/')
                     {
                         // tag end
                         ++i;
-                        if(contents[i] == '>')
+                        if (contents[i] == '>')
                         {
                             current.AddChild(newNode);
                             tagStack.pop();
@@ -481,7 +500,7 @@ namespace Craft
                     }
 
                     // tag end by >
-                    if(contents[i] == '>')
+                    else if (contents[i] == '>')
                     {
                         current.AddChild(newNode);
                         current = newNode;
@@ -500,35 +519,28 @@ namespace Craft
                 // content start
                 else
                 {
+                    auto firstIndex = i;
                     // read until '<' (next tag start)
                     // TODO: escape characters
                     // TODO: all while read, judge i < contents.size() | refactor
-                    // TODO: about white space
-                    bool setNull = true;
-                    while (contents[i] != '<' && i < contents.size())
+                    auto textLast = contents.find('<', i);
+                    if(textLast == std::string::npos)
                     {
-                        // TODO:different breakline symbol
-                        // other space character
-                        // if only blank character then context set ""
-                        // TODO:compare with find_first_of("")
-                        if(!_IsBlankChar(contents[i]))
-                        {
-                            setNull = false;
-                        }
-                        text.push_back(contents[i]);
-                        ++i;
+                        _status = TagNotMatchedError;
+                        return root;
                     }
-
-                    // TODO:compare with text=""; SetContext(text);
-                    if(setNull)
+                    auto firstCharIndex = contents.find_first_not_of(Blank, i);
+                    // TODO:npos compare
+                    // if find and before testLast, then set text, otherwise set text ""
+                    if(firstCharIndex != std::string::npos && firstCharIndex < textLast)
                     {
-                        current.SetContext("");
+                        current.SetContext(std::string(contents.substr(firstIndex, textLast - firstIndex)));
                     }
                     else
                     {
-                        current.SetContext(text);
+                        current.SetContext("");
                     }
-
+                    i = textLast;
                 }
             }
 
@@ -553,8 +565,51 @@ namespace Craft
     {
     public:
         XMLParserResult(XMLParser::ParseStatus status, int errorIndex) :
-            _status(status), _errorIndex(errorIndex)
+                _status(status), _errorIndex(errorIndex)
         {}
+
+        [[nodiscard]] std::string ErrorInfo() const
+        {
+            std::string errorName;
+            switch (_status)
+            {
+                case XMLParser::NoError:
+                    errorName = "NoError";
+                    break;
+                case XMLParser::FileOpenFailed:
+                    errorName = "FileOpenFailed";
+                    break;
+                case XMLParser::TagSyntaxError:
+                    errorName = "TagSyntaxError";
+                    break;
+                case XMLParser::TagBadCloseError:
+                    errorName = "TagBadCloseError";
+                    break;
+                case XMLParser::NullTagError:
+                    errorName = "NullTagError";
+                    break;
+                case XMLParser::CommentSyntaxError:
+                    errorName = "CommentSyntaxError";
+                    break;
+                case XMLParser::TagNotMatchedError:
+                    errorName = "TagNotMatchedError";
+                    break;
+                case XMLParser::AttributeSyntaxError:
+                    errorName = "AttributeSyntaxError";
+                    break;
+                case XMLParser::AttributeRepeatError:
+                    errorName = "AttributeRepeatError";
+                    break;
+                case XMLParser::DeclarationSyntaxError:
+                    errorName = "DeclarationSyntaxError";
+                    break;
+                case XMLParser::DeclarationPositionError:
+                    errorName = "DeclarationPositionError";
+                    break;
+            }
+            return errorName;
+        }
+
         XMLParser::ParseStatus _status;
         int _errorIndex;
     };
@@ -563,7 +618,7 @@ namespace Craft
     class XMLDocument : public XMLElement
     {
     public:
-        XMLParserResult LoadFile(const std::string& fileName)
+        XMLParserResult LoadFile(const std::string &fileName)
         {
             XMLParser parser;
             auto root = parser.ParseFile(fileName);
@@ -572,7 +627,7 @@ namespace Craft
             return XMLParserResult(parser.Status(), parser.ErrorIndex());
         }
 
-        XMLParserResult LoadString(const std::string& str)
+        XMLParserResult LoadString(const std::string &str)
         {
             XMLParser parser;
             auto root = parser.ParseString(str);
