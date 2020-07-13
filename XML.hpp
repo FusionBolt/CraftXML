@@ -255,9 +255,9 @@ namespace Craft
         // spell sensitive
         // order must be version encoding standalone
         // use " or '
-        int _ParseDeclaration(std::string_view &XMLString, int index)
+        void _ParseDeclaration(std::string_view &XMLString, size_t &index)
         {
-            return index;
+
         }
 
         // in XML, \t \r \n space are blank character
@@ -270,12 +270,137 @@ namespace Craft
         {
             // TODO: index = contents.size()
             auto first = index;
-            while (_IsNameChar(contents[index]) && index < contents.size())
+            auto last = contents.find_first_of(SymbolNotUsedInName, index);
+            if (last != std::string::npos)
             {
-                ++index;
+                index = last;
+            }
+            else
+            {
+                index = contents.size();
             }
             // TODO : if == 0
             return std::string(contents.substr(first, index - first));
+        }
+
+        void _ReadBlank(std::string_view contents, size_t &index)
+        {
+            index = contents.find_first_not_of(Blank, index);
+        }
+
+        std::string _ReadAttributeValue(std::string_view contents, size_t &index)
+        {
+            auto firstQuotation = contents[index];
+            if (firstQuotation != '"' && firstQuotation != '\'')
+            {
+                _status = AttributeSyntaxError;
+                _errorIndex = index;
+                return "";
+            }
+            ++index;
+            auto valueFirstIndex = index;
+            auto valueLastIndex = contents.find_first_of(firstQuotation, valueFirstIndex);
+            if (valueLastIndex == std::string::npos)
+            {
+                _status = AttributeSyntaxError;
+                _errorIndex = index;
+                return "";
+            }
+            index = valueLastIndex + 1;
+            return std::string(contents.substr(valueFirstIndex, valueLastIndex - valueFirstIndex));
+        }
+
+        // TODO: comment in many place
+        // <!  incoming index is point to '!'
+        void _ReadComment(std::string_view contents, size_t &index)
+        {
+            auto comment = contents.find("<!--", index - 1);
+            if (comment == std::string::npos)
+            {
+                _status = CommentSyntaxError;
+                _errorIndex = index;
+                return;
+            }
+            index = contents.find("-->", comment + 4);
+            if (index == std::string::npos)
+            {
+                return;
+            }
+            index += 4;
+        }
+
+        // TODO: escape characters
+        // TODO: all while read, judge i < contents.size() | refactor
+        // TODO: a bug, end of the text, if had Blank, will dump, add test example and fix
+        // if end tag, then read blank
+        std::string _ReadElementContent(std::string_view contents, size_t &index)
+        {
+            auto firstIndex = index;
+            auto textLast = contents.find('<', index);
+            if (textLast == std::string::npos)
+            {
+                _status = TagNotMatchedError;
+                _errorIndex = index;
+                return "";
+            }
+            auto firstCharIndex = contents.find_first_not_of(Blank, index);
+            index = textLast;
+            if (firstCharIndex != std::string::npos && firstCharIndex < textLast)
+            {
+                return std::string(contents.substr(firstIndex, textLast - firstIndex));
+            }
+            else
+            {
+                return "";
+            }
+        }
+
+        void _ReadAttribute(std::string_view contents, size_t &i, XMLElement &newNode)
+        {
+            while (_IsBlankChar(contents[i]))
+            {
+            // read space between tag and attribute name
+            // this blank is necessary
+            // while is judge have blank
+            // so _ReadBlank can't set i = std::string::pos
+                _ReadBlank(contents, i);
+                if (contents[i] != '>' && contents[i] != '/')
+                {
+                    // Attribute Name
+                    // name(space)*=(space)*\"content\"
+                    // while (contents[i] != '=' || contents[i] != ' ')
+                    auto attributeName = _ReadName(contents, i);
+                    // TODO:error process
+                    // read (space)*
+                    _ReadBlank(contents, i);
+                    if (contents[i] != '=')
+                    {
+                        _status = AttributeSyntaxError;
+                        _errorIndex = i;
+                        return;
+                    }
+                    ++i;
+
+                    _ReadBlank(contents, i);
+                    // Attribute Value
+                    // can't use '&'
+                    auto attributeValue = _ReadAttributeValue(contents, i);
+                    if (_status != NoError)
+                    {
+                        return;
+                    }
+
+                    //repeat attribute
+                    auto attr = newNode.GetAttribute();
+                    if (attr.find(attributeName) != attr.end())
+                    {
+                        _status = AttributeRepeatError;
+                        _errorIndex = i;
+                        return;
+                    }
+                    newNode.AddAttribute(attributeName, attributeValue);
+                }
+            }
         }
 
         XMLElement _Parse(std::string_view XMLString)
@@ -297,15 +422,12 @@ namespace Craft
                 return root;
             }
 
-            //i = _ParseDeclaration(XMLString, i);
+            _ParseDeclaration(XMLString, i);
 
             std::stack<std::string> tagStack;
             auto current = root;
             while (i < contents.size())
             {
-                std::string tag;
-                std::string text;
-
                 // tag start
                 if (contents[i] == '<')
                 {
@@ -317,22 +439,16 @@ namespace Craft
                         return root;
                     }
 
-                    // end tag
-                    if (contents[i] == '/')
+                    // end tag </tag>
+                    else if (contents[i] == '/')
                     {
                         ++i;
                         // < (space)* /
-                        while (_IsBlankChar(contents[i]))
-                        {
-                            ++i;
-                        }
+                        _ReadBlank(contents, i);
                         // TODO:error process
-                        tag = _ReadName(contents, i);
+                        auto tag = _ReadName(contents, i);
                         // </tag (space)* >
-                        while (_IsBlankChar(contents[i]))
-                        {
-                            ++i;
-                        }
+                        _ReadBlank(contents, i);
                         if (contents[i] != '>')
                         {
                             _status = TagBadCloseError;
@@ -354,193 +470,91 @@ namespace Craft
                             return root;
                         }
                         current = current.GetParent();
-                        continue;
                     }
 
-                    // comment
-                    if (contents[i] == '!')
+                    // comment <!--   -->
+                    else if (contents[i] == '!')
                     {
-                        auto comment = contents.find("<!--", i - 1);
-                        if (comment == std::string::npos)
+                        _ReadComment(contents, i);
+                        if (_status != NoError)
                         {
-                            _status = CommentSyntaxError;
-                            _errorIndex = i;
                             return root;
                         }
+                    }
 
-                        i = contents.find("-->", comment + 4);
-                        if (i == std::string::npos)
-                        {
-                            break;
-                        }
-                        else
-                        {
-                            i = i + 3;
-                        }
-                        ++i;
+                    // <tag>
+                    else
+                    {
+                        // new tag start
+                        // read start tag name
+                        auto tag = _ReadName(contents, i);
                         if (i >= contents.size())
-                        {
-                            break;
-                        }
-                        continue;
-                    }
-
-                    // new tag start
-                    // read start tag name
-
-
-                    auto oldI = i;
-                    tag = _ReadName(contents, i);
-                    assert(oldI <= i);
-
-                    if(i >= contents.size())
-                    {
-                        _status = TagBadCloseError;
-                        _errorIndex = i;
-                        return root;
-                    }
-                    if(!(_IsBlankChar(contents[i]) || contents[i] == '/' || contents[i] == '>'))
-                    {
-                        _status = TagSyntaxError;
-                        _errorIndex = i;
-                        return root;
-                    }
-
-                    tagStack.push(tag);
-                    auto newNode = XMLElement(tag);
-
-                    // Repeat read Attribute
-                    while (_IsBlankChar(contents[i]))
-                    {
-                        std::string attributeName;
-                        std::string attributeValue;
-                        // read space between tag and attribute name
-                        while (_IsBlankChar(contents[i]))
-                        {
-                            ++i;
-                        }
-                        if (contents[i] != '>' && contents[i] != '/')
-                        {
-                            // Attribute Name
-                            // name(space)*=(space)*\"content\"
-                            // while (contents[i] != '=' || contents[i] != ' ')
-                            attributeName = _ReadName(contents, i);
-                            // TODO:error process
-                            // read (space)*
-                            while (contents[i] != '=')
-                            {
-                                if (contents[i] != ' ')
-                                {
-                                    _status = AttributeSyntaxError;
-                                    _errorIndex = i;
-                                    return root;
-                                }
-                                ++i;
-                            }
-                            ++i;
-                            while (contents[i] != '"' && contents[i] != '\'')
-                            {
-                                if (contents[i] != ' ')
-                                {
-                                    _status = AttributeSyntaxError;
-                                    _errorIndex = i;
-                                    return root;
-                                }
-                                ++i;
-                            }
-                            ++i;
-                            // Attribute Value
-                            // not restrict
-                            // TODO: " " can contain ', ' ' can contain "
-                            auto firstIndex = i;
-                            while (contents[i] != '"' && contents[i] != '\'')
-                            {
-                                ++i;
-                            }
-                            attributeValue = contents.substr(firstIndex, i - firstIndex);
-                            // judge next char is " or '
-                            ++i;
-
-                            //repeat attribute
-                            auto attr = newNode.GetAttribute();
-                            if (attr.find(attributeName) != attr.end())
-                            {
-                                _status = AttributeRepeatError;
-                                _errorIndex = i;
-                                return root;
-                            }
-                            newNode.AddAttribute(attributeName, attributeValue);
-                        }
-                            // scanf to tag eng
-                        else
-                        {
-                            // to end
-                            break;
-                        }
-                    }
-
-                    // one tag, not one pair tag
-                    if (contents[i] == '/')
-                    {
-                        // tag end
-                        ++i;
-                        if (contents[i] == '>')
-                        {
-                            current.AddChild(newNode);
-                            tagStack.pop();
-                            ++i;
-                        }
-                        else
                         {
                             _status = TagBadCloseError;
                             _errorIndex = i;
                             return root;
                         }
-                        continue;
-                    }
+                        if (!(_IsBlankChar(contents[i]) || contents[i] == '/' || contents[i] == '>'))
+                        {
+                            _status = TagSyntaxError;
+                            _errorIndex = i;
+                            return root;
+                        }
 
-                    // tag end by >
-                    else if (contents[i] == '>')
-                    {
-                        current.AddChild(newNode);
-                        current = newNode;
-                        ++i;
-                        continue;
-                    }
-                    else
-                    {
-                        // > can't match
-                        _status = TagBadCloseError;
-                        _errorIndex = i;
-                        return root;
-                    }
+                        tagStack.push(tag);
+                        auto newNode = XMLElement(tag);
 
+                        // will read all space
+                        _ReadAttribute(contents, i, newNode);
+                        if(_status != NoError)
+                        {
+                            return root;
+                        }
+
+                        // <tag/>
+                        if (contents[i] == '/')
+                        {
+                            // tag end
+                            ++i;
+                            if (contents[i] != '>')
+                            {
+                                _status = TagBadCloseError;
+                                _errorIndex = i;
+                                return root;
+                            }
+                            current.AddChild(newNode);
+                            tagStack.pop();
+                            ++i;
+                            continue;
+                        }
+
+                        // tag end by >
+                        else if (contents[i] == '>')
+                        {
+                            current.AddChild(newNode);
+                            current = newNode;
+                            ++i;
+                            continue;
+                        }
+
+                        else
+                        {
+                            // > can't match
+                            _status = TagBadCloseError;
+                            _errorIndex = i;
+                            return root;
+                        }
+                    }
                 }
+
                 // content start
                 else
                 {
-                    auto firstIndex = i;
-                    // read until '<' (next tag start)
-                    // TODO: escape characters
-                    // TODO: all while read, judge i < contents.size() | refactor
-                    auto textLast = contents.find('<', i);
-                    if(textLast == std::string::npos)
+                    current.SetContext(_ReadElementContent(contents, i));
+                    if (_status != NoError)
                     {
-                        _status = TagNotMatchedError;
                         return root;
                     }
-                    auto firstCharIndex = contents.find_first_not_of(Blank, i);
-                    // TODO:npos compare
-                    // if find and before testLast, then set text, otherwise set text ""
-                    if(firstCharIndex != std::string::npos && firstCharIndex < textLast)
-                    {
-                        current.SetContext(std::string(contents.substr(firstIndex, textLast - firstIndex)));
-                    }
-                    else
-                    {
-                        current.SetContext("");
-                    }
-                    i = textLast;
                 }
             }
 
