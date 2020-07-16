@@ -35,17 +35,17 @@ namespace Craft
             NodeElement,
             NodeData,
             NodeCData,
-            NodeCommet, // TODO: save text and set nottype
+            NodeCommet,
             NodeDoctype, // TODO: do it
-            NodeDeclaration, // TODO: do it
+            NodeDeclaration,
             NodePI // process instruction TODO: do it
         };
 
         using XMLNodeIterator = std::vector<XMLNode>::iterator;
         using XMLNodes = std::vector<XMLNode>;
 
-        XMLNode(std::string tag = "", std::string context = "", NodeType type = NodeElement) :
-                _node(new XMLNodeStruct(std::move(tag), std::move(context), type))
+        XMLNode(std::string tag = "", std::string content = "", NodeType type = NodeElement) :
+                _node(new XMLNodeStruct(std::move(tag), std::move(content), type))
         {}
 
         XMLNode(NodeType type) : XMLNode("", "", type)
@@ -65,14 +65,25 @@ namespace Craft
             return _node->_children.end();
         }
 
+        // TODO: test
+        [[nodiscard]] XMLNodes operator[](const std::string& TagName) const
+        {
+            return FindChildByTagName(TagName);
+        }
+
+        void SetNodeType(NodeType type) noexcept
+        {
+            _node->_type = type;
+        }
+
         [[nodiscard]] std::string GetTag() const
         {
             return _node->_tag;
         }
 
-        [[nodiscard]] std::string GetContext() const
+        [[nodiscard]] std::string GetContent() const
         {
-            return _node->_context;
+            return _node->_content;
         }
 
         [[nodiscard]] std::map<std::string, std::string> GetAttribute() const
@@ -85,7 +96,6 @@ namespace Craft
             return !_node->_children.empty();
         }
 
-        // TODO:element not nullptr and parent nullptr, what should I do
         void AddChild(XMLNode &child)
         {
             assert(child._node != nullptr);
@@ -116,7 +126,7 @@ namespace Craft
 
         void SetContext(std::string context)
         {
-            _node->_context = std::move(context);
+            _node->_content = std::move(context);
         }
 
         [[nodiscard]] XMLNode FirstChild() const
@@ -124,11 +134,8 @@ namespace Craft
             return _node->_children[0];
         }
 
-        // TODO:重载[]
-        // TODO:const return can changed?
         [[nodiscard]] XMLNode FindFirstChildByTagName(const std::string &tagName) const
         {
-            // TODO:标准库算法替换
             // performance compare
             for (auto &child : _node->_children)
             {
@@ -151,11 +158,11 @@ namespace Craft
                 }
             }
             return children;
-    }
+        }
 
         [[nodiscard]] std::string StringValue() const
         {
-            return _node->_context;
+            return _node->_content;
         }
 
         void output() const noexcept
@@ -163,7 +170,7 @@ namespace Craft
             for (auto &c : _node->_children)
             {
                 std::cout << "<" << c._node->_tag << ">" << std::endl;
-                std::cout << c._node->_context << std::endl;
+                std::cout << c._node->_content << std::endl;
                 c.output();
                 std::cout << "<\\" << c._node->_tag << ">" << std::endl;
             }
@@ -174,12 +181,12 @@ namespace Craft
         {
             XMLNodeStruct() = default;
 
-            XMLNodeStruct(std::string tag, std::string context, NodeType type, std::shared_ptr<XMLNodeStruct> parent = nullptr) :
-                    _tag(std::move(tag)), _context(std::move(context)), _type(type), _parent(parent)
+            XMLNodeStruct(std::string tag, std::string content, NodeType type, const std::shared_ptr<XMLNodeStruct>& parent = nullptr) :
+                    _tag(std::move(tag)), _content(std::move(content)), _type(type), _parent(parent)
             {}
 
             std::map<std::string, std::string> _attributes;
-            std::string _tag, _context;
+            std::string _tag, _content;
             XMLNodes _children;
             NodeType _type;
             // std::shared_ptr<XMLNodeStruct> _parent;
@@ -193,9 +200,10 @@ namespace Craft
     class XMLParserResult;
 
 
-
+    class F;
     class XMLParser
     {
+        friend class F;
     public:
         enum ParseStatus
         {
@@ -211,6 +219,9 @@ namespace Craft
             DeclarationSyntaxError,
             DeclarationPositionError,
             CDATASyntaxError,
+            PISyntaxError,
+            PrologSyntaxError,
+            DOCTYPESyntaxError
         };
         XMLParser() = default;
 
@@ -245,49 +256,46 @@ namespace Craft
 
     private:
         constexpr static std::string_view SymbolNotUsedInName = R"(!"#$%&'()*+,/;<=>?@[\]^`{|}~ )";
-        constexpr static std::string_view Blank = "\t\r\n ";
+        // constexpr static std::string_view Blank = "\t\r\n ";
+        constexpr static std::string_view Blank = "\x20\x09\x0d\x0A";
         constexpr static std::string_view CDATA = "[CDATA[";
 
         ParseStatus _status = NoError;
 
         int _errorIndex = -1;
 
-        struct XMLDeclarationInfo
-        {
-            XMLDeclarationInfo() = default;
-
-            std::string _version, _encoding, _standalone;
-
-            XMLDeclarationInfo(std::string version, std::string encoding, std::string standalone)
-            {
-
-            }
-        };
-
-        XMLDeclarationInfo _declarationInfo;
-
-        [[nodiscard]] bool _IsNameChar(char c) const
+        [[nodiscard]] bool _IsNameChar(char c) const noexcept
         {
             return SymbolNotUsedInName.find(c) == std::string::npos;
         }
 
-        // TODO:declaration
-        // must have version
-        // spell sensitive
-        // order must be version encoding standalone
-        // use " or '
-        void _ParseDeclaration(std::string_view &XMLString, size_t &index)
+        // TODO:compare with constexpr version
+        bool _IsCDATA(std::string_view contents, size_t &i) const
         {
+            return contents[i + 1] == '[' && contents[i + 2] == 'C' && contents[i + 3] == 'D' && contents[i + 4] == 'A'
+                && contents[i + 5] == 'T' && contents[i + 6] == 'A' && contents[i + 7] == '[';
+        }
 
+        bool _IsXML(std::string_view contents, size_t i) const
+        {
+            return ((contents[i + 0] == 'x' || contents[i + 0] == 'X') &&
+            (contents[i + 1] == 'm' || contents[i + 1] == 'M') &&
+            (contents[i + 2] == 'l' || contents[i + 2] == 'L'));
+        }
+
+        bool _IsXMLDeclarationStart(std::string_view contents, size_t i) const
+        {
+            return (contents[i + 0] == '<' && contents[i + 1] == '?' &&
+                _IsXML(contents, i + 2));
         }
 
         // in XML, \t \r \n space are blank character
-        bool _IsBlankChar(char c)
+        bool _IsBlankChar(char c) const noexcept
         {
             return Blank.find(c) != std::string::npos;
         }
 
-        std::string _ReadName(std::string_view contents, size_t &index)
+        std::string _ParseName(std::string_view contents, size_t &index)
         {
             // TODO: index = contents.size()
             auto first = index;
@@ -302,12 +310,60 @@ namespace Craft
             }
         }
 
-        void _ReadBlank(std::string_view contents, size_t &index)
+
+        // TODO: add test
+        // TODO: Error, process, end with ?>
+        // must have version
+        // spell sensitive
+        // order must be version encoding standalone
+        // use " or '
+        // [23]XMLDecl ::= '<?xml' VersionInfo EncodingDecl? SDDecl? S? '?>'
+        // [24]VersionInfo ::= S 'version' Eq ("'" VersionNum "'" | '"' VersionNum '"')/* */
+        // [25]Eq ::= S? '=' S?
+        // [26]VersionNum ::= ([a-zA-Z0-9_.:] | '-')+
+        // TODO: same as standard
+        void _ParseDeclaration(std::string_view contents, size_t &i, XMLNode& current)
         {
-            index = contents.find_first_not_of(Blank, index);
+            if(!_IsXMLDeclarationStart(contents, i))
+            {
+                _status = DeclarationSyntaxError;
+                _errorIndex = i;
+                return;
+            }
+            i += 5;
+
+            auto newChild = XMLNode(XMLNode::NodeType::NodeDeclaration);
+            _ParseAttribute(contents, i, newChild);
+            if(newChild.GetAttribute()["standalone"].empty())
+            {
+                newChild.AddAttribute("standalone", "no");
+            }
+            if(_status != NoError || newChild.GetAttribute()["version"].empty())
+            {
+                return;
+            }
+            current.AddChild(newChild);
         }
 
-        std::string _ReadAttributeValue(std::string_view contents, size_t &index)
+        // TODO: compare with if (performance)
+        // TODO: need split two function??
+        // TODO: if 0 space, do while??
+        void _ParseBlank(std::string_view contents, size_t &index)
+        {
+            index = contents.find_first_not_of(Blank, index);
+//            auto last = contents.find_first_not_of(Blank, index);
+//            if(last == std::string::npos)
+//            {
+//                return false;
+//            }
+//            else
+//            {
+//                index = last;
+//                return true;
+//            }
+        }
+
+        std::string _ParseAttribute(std::string_view contents, size_t &index)
         {
             auto firstQuotation = contents[index];
             if (firstQuotation != '"' && firstQuotation != '\'')
@@ -329,23 +385,30 @@ namespace Craft
             return std::string(contents.substr(valueFirstIndex, valueLastIndex - valueFirstIndex));
         }
 
-        //
-        // TODO: comment in many place
+
+        // TODO: test
+        // [15]Comment::='<!--' ((Char - '-') | ('-' (Char - '-')))* '-->'
+        // TODO:1.不允许--->结尾
+        //      2.不允许--
         // <!  incoming index is point to '!'
-        void _ReadComment(std::string_view contents, size_t &index)
+        void _ParseComment(std::string_view contents, size_t &index, XMLNode& current)
         {
-            auto comment = contents.find("<!--", index - 1);
-            if (comment == std::string::npos)
+            auto commentFirst = contents.find("<!--", index);
+            if (commentFirst == std::string::npos)
             {
                 _status = CommentSyntaxError;
                 _errorIndex = index;
                 return;
             }
-            index = contents.find("-->", comment + 4);
+            commentFirst += 4;
+            index = contents.find("-->", commentFirst);
             if (index == std::string::npos)
             {
                 return;
             }
+            auto newNode = XMLNode("", std::string(contents.substr(commentFirst, index - commentFirst)),
+                                   XMLNode::NodeType::NodeCommet);
+            current.AddChild(newNode);
             index += 4;
         }
 
@@ -354,7 +417,7 @@ namespace Craft
         // TODO: a bug, end of the text, if had Blank, will dump, add test example and fix
         // if end tag, then read blank
         // TODO: CDATA and Comment may be in Content
-        std::string _ReadElementContent(std::string_view contents, size_t &index)
+        void _ParseElementContext(std::string_view contents, size_t &index, XMLNode& current)
         {
             auto firstIndex = index;
             auto textLast = contents.find('<', index);
@@ -362,39 +425,36 @@ namespace Craft
             {
                 _status = TagNotMatchedError;
                 _errorIndex = index;
-                return "";
+                return;
             }
             // DATA OR CDATA
             auto firstCharIndex = contents.find_first_not_of(Blank, index);
             index = textLast;
+            current.SetNodeType(XMLNode::NodeType::NodeData);
             if (firstCharIndex != std::string::npos && firstCharIndex < textLast)
             {
-                return std::string(contents.substr(firstIndex, textLast - firstIndex));
-            }
-            else
-            {
-                return "";
+                current.SetContext(std::string(contents.substr(firstIndex, textLast - firstIndex)));
             }
         }
 
-        void _ReadAttribute(std::string_view contents, size_t &index, XMLNode &newNode)
+        void _ParseAttribute(std::string_view contents, size_t &index, XMLNode &newNode)
         {
             while (_IsBlankChar(contents[index]))
             {
                 // read space between tag and attribute name
                 // this blank is necessary
                 // while is judge have blank
-                // so _ReadBlank can't set index = std::string::pos
-                _ReadBlank(contents, index);
+                // so _ParseBlank can't set index = std::string::pos
+                _ParseBlank(contents, index);
                 if (contents[index] != '>' && contents[index] != '/')
                 {
                     // Attribute Name
                     // name(space)*=(space)*\"content\"
                     // while (contents[index] != '=' || contents[index] != ' ')
-                    auto attributeName = _ReadName(contents, index);
+                    auto attributeName = _ParseName(contents, index);
                     // TODO:error process
                     // read (space)*
-                    _ReadBlank(contents, index);
+                    _ParseBlank(contents, index);
                     if (contents[index] != '=')
                     {
                         _status = AttributeSyntaxError;
@@ -403,10 +463,10 @@ namespace Craft
                     }
                     ++index;
 
-                    _ReadBlank(contents, index);
+                    _ParseBlank(contents, index);
                     // Attribute Value
                     // can't use '&'
-                    auto attributeValue = _ReadAttributeValue(contents, index);
+                    auto attributeValue = _ParseAttribute(contents, index);
                     if (_status != NoError)
                     {
                         return;
@@ -425,11 +485,11 @@ namespace Craft
             }
         }
 
-        void _ReadStartTag(std::string_view contents, size_t &index, XMLNode& current, std::stack<std::string>& tagStack)
+        void _ParseStartTag(std::string_view contents, size_t &index, XMLNode& current, std::stack<std::string>& tagStack)
         {
             // new tag start
             // read start tag name
-            auto tag = _ReadName(contents, index);
+            auto tag = _ParseName(contents, index);
             if (index >= contents.size())
             {
                 _status = TagBadCloseError;
@@ -447,7 +507,7 @@ namespace Craft
             auto newNode = XMLNode(tag);
 
             // will read all space
-            _ReadAttribute(contents, index, newNode);
+            _ParseAttribute(contents, index, newNode);
             if(_status != NoError)
             {
                 return;
@@ -488,15 +548,15 @@ namespace Craft
             }
         }
 
-        void _ReadEndTag(std::string_view contents, size_t &i, XMLNode& current, std::stack<std::string>& tagStack)
+        void _ParseEndTag(std::string_view contents, size_t &i, XMLNode& current, std::stack<std::string>& tagStack)
         {
             ++i;
             // < (space)* /
-            _ReadBlank(contents, i);
+            _ParseBlank(contents, i);
             // TODO:error process
-            auto tag = _ReadName(contents, i);
+            auto tag = _ParseName(contents, i);
             // </tag (space)* >
-            _ReadBlank(contents, i);
+            _ParseBlank(contents, i);
             if (contents[i] != '>')
             {
                 _status = TagBadCloseError;
@@ -520,8 +580,8 @@ namespace Craft
             current = current.GetParent();
         }
 
-        // TODO: complete
-        std::string _ReadCData(std::string_view contents, size_t &index)
+        // TODO: test
+        void _ParseCDATA(std::string_view contents, size_t &index, XMLNode& current)
         {
             // can't nested
             // starts with <![CDATA[
@@ -530,15 +590,169 @@ namespace Craft
             index = contents.find("]]>", index);
             if(index != std::string::npos)
             {
-                return std::string(contents.substr(first, index - first));
+                auto newNode = XMLNode("", std::string(contents.substr(first, index - first)),
+                        XMLNode::NodeType::NodeCData);
+                current.AddChild(newNode);
             }
             else
             {
                 _status = CDATASyntaxError;
             }
-            return "";
         }
 
+        bool _IsDOCTYPE(std::string_view contents, size_t i) const
+        {
+            return (contents[i] == 'D' && contents[i + 1] == 'O' && contents[i + 2] == 'C'
+                    && contents[i + 3] == 'T' && contents[i + 4] == 'Y'
+                            && contents[i + 5] == 'P' && contents[i + 6] == 'E' && contents[i + 7] == ' ');
+        }
+
+        bool _IsELEMENT(std::string_view contents, size_t i) const
+        {
+            return contents.substr(0, 10) == "<!ELEMENT ";
+        }
+        // [28]doctypedecl ::= '<!DOCTYPE' S Name (S ExternalID)? S? ('[' (markupdecl | DeclSep)* ']' S?)? '>'	[VC: 根元素类型]
+        // [WFC: 外部子集]
+        // [28a]DeclSep ::= PEReference | S	[WFC: 声明间的参数实体]
+        // [29]markupdecl ::= elementdecl | AttlistDecl | EntityDecl | NotationDecl | PI | Comment	[VC: 严格的声明/参数实体嵌套]
+        // [WFC: 内部子集中的参数实体]
+        void _ParseDoctypeDecl(std::string_view contents, size_t &index, XMLNode& current)
+        {
+            // read doctype and a space
+            if(!_IsDOCTYPE(contents, index))
+            {
+                _status = DOCTYPESyntaxError;
+                _errorIndex = index;
+                return;
+            }
+            index += 8;
+
+            // parseblank, is zero, then return false
+            _ParseBlank(contents, index);
+            _ParseName(contents, index);
+            _ParseBlank(contents, index);
+
+            if(contents[index] != '[')
+            {
+
+            }
+            ++index;
+
+            auto first = index;
+            while(true)
+            {
+                if(_IsELEMENT(contents, index))
+                {
+                    index += 10;
+                    // read
+                }
+                else if(contents[index] == ']' && contents[index + 1] == '>')
+                {
+                    index += 2;
+                    break;
+                }
+            }
+            auto content = std::string(contents.substr(first, index - first - 2));
+            auto newNode = XMLNode("", content, XMLNode::NodeType::NodeDoctype);
+        }
+
+
+
+        // [22]prolog ::= XMLDecl? Misc* (doctypedecl Misc*)?
+        // [27]Misc ::= Comment | PI | S
+        // TODO:test
+        // TODO:add first
+        void _ParseProlog(std::string_view contents, size_t &index, XMLNode& current)
+        {
+            // TODO: parse blank is parse space*, if space?, shoule if
+            // TODO:单元测试
+            _ParseBlank(contents, index);
+            if(_IsXMLDeclarationStart(contents, index))
+            {
+                index += 5;
+                _ParseDeclaration(contents, index, current);
+            }
+            while(true)
+            {
+                //comment pi space
+                _ParseBlank(contents, index);
+                if (contents[index] == '<')
+                {
+                    if (contents[index + 1] == '!')
+                    {
+                        index += 2;
+                        if (contents[index] == '-' && contents[index + 1] == '-')
+                        {
+                            _ParseComment(contents, index, current);
+                        }
+                        else if (contents[index + 2] == 'D')
+                        {
+                            _ParseDoctypeDecl(contents, index, current);
+                        }
+                        else
+                        {
+                            _status = PrologSyntaxError;
+                            _errorIndex = index;
+                            return;
+                        }
+                    }
+                    else if (contents[index + 1] == '?')
+                    {
+                        index += 2;
+                        _ParsePI(contents, index, current);
+                    }
+                    else
+                    {
+                        // element
+                        return;
+                    }
+                }
+                else
+                {
+                    // error
+                    _status = PrologSyntaxError;
+                    _errorIndex = index;
+                    return;
+                }
+            }
+            if(_status != NoError)
+            {
+                return;
+            }
+        }
+
+        // [16]PI::= '<?' PITarget (S (Char* - (Char* '?>' Char*)))? '?>'
+        //[17]PITarget::=Name - (('X' | 'x') ('M' | 'm') ('L' | 'l'))
+        void _ParsePI(std::string_view contents, size_t &index, XMLNode& current)
+        {
+            // TODO: name is not (('X' | 'x') ('M' | 'm') ('L' | 'l'))
+            // match ? (0|1)
+            if(_IsXML(contents, index))
+            {
+                _status = PISyntaxError;
+                _errorIndex = index;
+                return;
+            }
+            auto name = _ParseName(contents, index); // PITarget
+            _ParseBlank(contents, index);
+            // read value
+            auto last = contents.find("?>", index);
+            // if val is "to sdf fsd  ?>"
+            // TODO: after space compare with rapidxml
+            if(last == std::string::npos)
+            {
+                _status = PISyntaxError;
+                _errorIndex = index;
+                return;
+            }
+            else
+            {
+                auto context = contents.substr(index, last - index);
+                auto newChild = XMLNode(name, "", XMLNode::NodeType::NodePI);
+                current.AddChild(newChild);
+                index = last;
+            }
+        }
         XMLNode _Parse(std::string_view XMLString)
         {
             auto contents = XMLString;
@@ -558,7 +772,7 @@ namespace Craft
                 return root;
             }
 
-            _ParseDeclaration(XMLString, i);
+            // _ParseDeclaration(XMLString, i, root);
 
             std::stack<std::string> tagStack;
             auto current = root;
@@ -570,42 +784,56 @@ namespace Craft
                     ++i;
                     switch (contents[i])
                     {
-                        case '?': // declaration must be first line which not null
-                            _status = DeclarationPositionError;
-                            break;
-                        case '/': // end tag </tag>
-                            _ReadEndTag(contents, i, current, tagStack);
-                            break;
-                            // TODO: compare with char compare contents[i] == '!'
-                        case '!': // comment <!--   -->
-                            if(contents[i+1] == '-')
+                        case '?':
+                            // declaration must be first line which not null
+                            if(_IsXMLDeclarationStart(contents, i - 1))
                             {
-                                _ReadComment(contents, i);
+                                _status = DeclarationPositionError;
                             }
                             else
                             {
-                                // TODO: place by if
-                                if(contents.substr(i, 8) == CDATA)
+                                ++i;
+                                _ParsePI(contents, i, current);
+                            }
+                            break;
+                        case '/': // end tag </tag>
+                            _ParseEndTag(contents, i, current, tagStack);
+                            break;
+                        case '!': // comment <!--   -->
+                            if(contents[i + 1] == '-' && contents[i + 2] == '-')
+                            {
+                                i += 2;
+                                _ParseComment(contents, i, current);
+                            }
+                            else if(contents[i + 1] == '[')
+                            {
+                                if(_IsCDATA(contents, i))
                                 {
                                     i += 8;
-                                    current.SetContext(_ReadCData(contents, i));
-                                    // TODO:NodeType
+                                    _ParseCDATA(contents, i, current);
                                 }
+                            }
+                            else
+                            {
+                                // TODO: error info??
+                                _status = CommentSyntaxError;
+                                _errorIndex = i;
                             }
                             break;
                         default: // <tag>
-                            _ReadStartTag(contents, i, current, tagStack);
+                            _ParseStartTag(contents, i, current, tagStack);
                     }
                 }
                 // content start
                 else
                 {
-                    current.SetContext(_ReadElementContent(contents, i));
+                    _ParseElementContext(contents, i, current);
                 }
                 if(_status != NoError)
                 {
                     return root;
                 }
+                _ParseBlank(contents, i);
             }
 
             if (current._node != root._node)
@@ -618,7 +846,7 @@ namespace Craft
             root.SetContext("");
             assert(root.GetParent()._node == nullptr);
             assert(root.GetTag().empty());
-            assert(root.GetContext().empty());
+            assert(root.GetContent().empty());
             assert(root.GetAttribute().empty());
             return root;
         }
@@ -678,10 +906,11 @@ namespace Craft
         int _errorIndex;
     };
 
-    // TODO: LoadFile judge is xml file??
+
     class XMLDocument : public XMLNode
     {
     public:
+        // TODO:(CFLR | CF)转换为LR
         XMLParserResult LoadFile(const std::string &fileName)
         {
             XMLParser parser;
