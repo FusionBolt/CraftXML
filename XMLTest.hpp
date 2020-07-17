@@ -17,7 +17,6 @@ using namespace Craft;
                                             if(result._status != parseStatus)\
                                             {std::cout << result.ErrorInfo() << std::endl; return false;}\
                                             else{return true;}
-
 bool OneTagTest1()
 {
     LOAD_STRING("<hr />");
@@ -62,11 +61,11 @@ bool ContentTest()
 bool CommentTest()
 {
     LOAD_STRING("<!--tag-->")
-    if(!document.FindChildByTagName("").empty())
+    if(document.FindFirstChildByTagName("").GetContent() == "tag")
     {
-        return false;
+        return true;
     }
-    return true;
+    return false;
 }
 
 bool OneAttributeTest()
@@ -80,7 +79,7 @@ bool OneAttributeTest()
     return false;
 }
 
-bool AttributeSpostropheTest()
+bool AttributeTest()
 {
     LOAD_STRING("<tag attr =   \'first\'></tag>")
     auto attr = document.FirstChild().GetAttribute();
@@ -143,11 +142,6 @@ bool TagSyntaxErrorTest1()
     LOAD_ERROR_STRING("  <<", XMLParser::TagSyntaxError)
 }
 
-bool TagSyntaxErrorTest2()
-{
-    LOAD_ERROR_STRING("  >>", XMLParser::TagSyntaxError)
-}
-
 bool TagSyntaxErrorTest3()
 {
     LOAD_ERROR_STRING("<w%></w%>", XMLParser::TagSyntaxError);
@@ -156,11 +150,6 @@ bool TagSyntaxErrorTest3()
 bool TagBadCloseError()
 {
     LOAD_ERROR_STRING("<tag", XMLParser::TagBadCloseError)
-}
-
-bool NullTagErrorTest()
-{
-    LOAD_ERROR_STRING("<></>", XMLParser::NullTagError)
 }
 
 bool TagNotMatchedErrorTest1()
@@ -198,11 +187,6 @@ bool AttributeRepeatError()
     LOAD_ERROR_STRING(R"(<tag attr="first" attr="second"></tag>)", XMLParser::AttributeRepeatError);
 }
 
-bool CommentSyntaxErrorTest()
-{
-    LOAD_ERROR_STRING("<!>", XMLParser::CommentSyntaxError);
-}
-
 inline std::map<std::string, std::function<bool(void)>> testFunction;
 
 void TestBind()
@@ -213,7 +197,7 @@ void TestBind()
     testFunction["ContentTest"] = ContentTest;
     testFunction["CommentTest"] = CommentTest;
     testFunction["OneAttributeTest"] = OneAttributeTest;
-    testFunction["AttributeSpostropheTest"] = AttributeSpostropheTest;
+    testFunction["AttributeTest"] = AttributeTest;
     testFunction["MultiAttributeTest"] = MultiAttributeTest;
 
     testFunction["FileOpenFailedTest"] = FileOpenFailedTest;
@@ -222,10 +206,8 @@ void TestBind()
     testFunction["EndTagSpaceTest2"] = EndTagSpaceTest2;
 
     testFunction["TagSyntaxErrorTest1"] = TagSyntaxErrorTest1;
-    testFunction["TagSyntaxErrorTest2"] = TagSyntaxErrorTest2;
     testFunction["TagSyntaxErrorTest3"] = TagSyntaxErrorTest3;
     testFunction["TagBadCloseError"] = TagBadCloseError;
-    testFunction["NullTagErrorTest"] = NullTagErrorTest;
     testFunction["TagNotMatchedErrorTest1"] = TagNotMatchedErrorTest1;
     testFunction["TagNotMatchedErrorTest2"] = TagNotMatchedErrorTest2;
     testFunction["TagNotMatchedErrorTest3"] = TagNotMatchedErrorTest3;
@@ -233,7 +215,6 @@ void TestBind()
     testFunction["AttributeSyntaxErrorTest1"] = AttributeSyntaxErrorTest1;
     testFunction["AttributeSyntaxErrorTest2"] = AttributeSyntaxErrorTest2;
     testFunction["AttributeRepeatError"] = AttributeRepeatError;
-    testFunction["CommentSyntaxErrorTest"] = CommentSyntaxErrorTest;
 }
 
 void Test()
