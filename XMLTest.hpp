@@ -10,11 +10,13 @@ using namespace Craft;
 #define DEBUG_INFO std::cout << "ErrorLine:" << __LINE__ << \
                          " ErrorFunction:" << __FUNCTION__ << std::endl;
 
+#define ERROR_INFO(Val1, Val2) std::cout << "Expect Val:" << Val2 << " Actual Val:" << Val1 << std::endl;\
+                                DEBUG_INFO;
 #define ERROR_STR_OUTPUT(InputStr) std::cout << "Error Str:" << InputStr << "\nParseErrorType:" <<\
                          result.ErrorInfo() << std::endl;DEBUG_INFO;
 
-#define ASSERT_EQ(Val1, Val2) if(Val1 != Val2) {DEBUG_INFO;return false;}
-#define ASSERT_NOT_EQ(Val1, Val2) if(Val1 == Val2) {DEBUG_INFO;return false;}
+#define ASSERT_EQ(Val1, Val2) if(Val1 != Val2) {ERROR_INFO(Val1, Val2);return false;}
+#define ASSERT_NOT_EQ(Val1, Val2) if(Val1 == Val2) {ERROR_INFO(Val1, Val2);return false;}
 #define ASSERT_TRUE(Val1) ASSERT_EQ(Val1, true)
 #define ASSERT_FALSE(Val1) ASSERT_NOT_EQ(Val1, true)
 
@@ -29,7 +31,7 @@ using namespace Craft;
 
 bool OneTagTest1()
 {
-    ASSERT_NO_ERROR_PARSE_STRING("<hr />");
+    ASSERT_NO_ERROR_PARSE_STRING("<hr />")
     ASSERT_FALSE(document.FindChildrenByTagName("hr").empty())
     return true;
 }
@@ -55,6 +57,19 @@ bool ContentTest()
     auto elements = document.FindChildrenByTagName("tag");
     ASSERT_FALSE(elements.empty());
     ASSERT_EQ(elements[0].StringValue(), "content")
+    return true;
+}
+
+bool EntityReferenceTest()
+{
+#define ENTITY_OK(Str, Char) i = 1;ASSERT_EQ(p.ParseEntityReference(Str, i), Char)
+    XMLParser p;
+    size_t i = 0;
+    ENTITY_OK("&lt;", '<')
+    ENTITY_OK("&gt;", '>')
+    ENTITY_OK("&amp;", '&')
+    ENTITY_OK("&apos;", '\'')
+    ENTITY_OK("&quot;", '"')
     return true;
 }
 
@@ -222,6 +237,8 @@ void TestBind()
 
     testFunction["FileOpenFailedTest"] = FileOpenFailedTest;
     testFunction["OperatorOverLoadTest"] = OperatorOverLoadTest;
+
+    testFunction["EntityReferenceTest"] = EntityReferenceTest;
 }
 
 void Test()

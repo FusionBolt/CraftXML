@@ -223,10 +223,9 @@ namespace Craft
             CDATASyntaxError,
             PISyntaxError,
             PrologSyntaxError,
-            DOCTYPESyntaxError,
             ElementSyntaxError,
             MiscSyntaxError,
-            CharacterEntityError
+            EntityReferenceError
         };
         XMLParser() = default;
 
@@ -259,8 +258,80 @@ namespace Craft
             return _errorIndex;
         }
 
-        // TODO:changed it
-    //private:
+        // [66]CharRef ::= '&#' [0-9]+ ';'
+        //              | '&#x' [0-9a-fA-F]+ ';'
+        // [67]Reference ::= EntityRef | CharRef
+        // [68]EntityRef ::= '&' Name ';'
+        // [69]PEReference ::= '%' Name ';'
+        char ParseEntityReference(std::string_view contents, size_t &i)
+        {
+            char c = 0;
+            if(contents[i] == 'l' && contents[i + 1] == 't')
+            {
+                c = '<';
+                i += 2;
+            }
+            else if(contents[i] == 'g' && contents[i + 1] == 't')
+            {
+                c = '>';
+                i += 2;
+            }
+            else if(contents[i] == 'a' && contents[i + 1] == 'm' && contents[i + 2] == 'p')
+            {
+                c = '&';
+                i += 3;
+            }
+            else if(contents[i] == 'a' && contents[i + 1] == 'p' && contents[i + 2] == 'o' && contents[i + 3] == 's')
+            {
+                c = '\'';
+                i += 4;
+            }
+            else if(contents[i] == 'q' && contents[i + 1] == 'u' && contents[i + 2] == 'o' && contents[i + 3] == 't')
+            {
+                c = '"';
+                i += 4;
+            }
+            else if(contents[i] == '#')
+            {
+                i += 1;
+                std::string num;
+                if(contents[i + 1] == 'x')
+                {
+                    i += 1;
+                    auto firstIndex = i;
+                    num = "0x";
+                    while(_IsNumber(contents[i]) ||
+                          (contents[i] > 'A' && contents[i] < 'F'))
+                    {
+                        ++i;
+                        num.push_back(contents[i]);
+                    }
+                    sscanf(num.c_str(), "%x", &c);
+                }
+                else
+                {
+                    auto firstIndex = i;
+                    while(_IsNumber(contents[i]))
+                    {
+                        ++i;
+                        num.push_back(contents[i]);
+                    }
+                    sscanf(num.c_str(), "%d", &c);
+                }
+            }
+            else
+            {
+                return '\0';
+            }
+            if(contents[i] != ';')
+            {
+                return '\0';
+            }
+            ++i;
+            return c;
+        }
+
+    private:
         constexpr static std::string_view SymbolNotUsedInName = R"(!"#$%&'()*+,/;<=>?@[\]^`{|}~ )";
         // constexpr static std::string_view Blank = "\t\r\n ";
         constexpr static std::string_view Blank = "\x20\x09\x0d\x0A";
@@ -274,21 +345,14 @@ namespace Craft
             return SymbolNotUsedInName.find(c) == std::string::npos;
         }
 
-        // TODO:compare with constexpr version
-        bool _IsCDATA(std::string_view contents, size_t &i) const
-        {
-            return contents[i + 1] == '[' && contents[i + 2] == 'C' && contents[i + 3] == 'D' && contents[i + 4] == 'A'
-                && contents[i + 5] == 'T' && contents[i + 6] == 'A' && contents[i + 7] == '[';
-        }
-
-        bool _IsXML(std::string_view contents, size_t i) const
+        [[nodiscard]] bool _IsXML(std::string_view contents, size_t i) const
         {
             return ((contents[i + 0] == 'x' || contents[i + 0] == 'X') &&
             (contents[i + 1] == 'm' || contents[i + 1] == 'M') &&
             (contents[i + 2] == 'l' || contents[i + 2] == 'L'));
         }
 
-        bool _IsXMLDeclarationStart(std::string_view contents, size_t i) const
+        [[nodiscard]] bool _IsXMLDeclarationStart(std::string_view contents, size_t i) const
         {
             return (contents[i + 0] == '<' && contents[i + 1] == '?' &&
                 _IsXML(contents, i + 2));
@@ -299,11 +363,6 @@ namespace Craft
         {
             return Blank.find(c) != std::string::npos;
         }
-
-        char f(std::string_view contents, size_t& index) const
-        {
-        }
-
 
         // TODO:finish
         // [2]Char	::= #x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD] | [#x10000-#x10FFFF]
@@ -374,7 +433,6 @@ namespace Craft
             current.AddChild(newChild);
         }
 
-        // TODO: compare with if (performance)
         void _ParseBlank(std::string_view contents, size_t &index)
         {
             // not 0 is find, may be in
@@ -385,7 +443,6 @@ namespace Craft
 //                    |  "'" ([^<&'] | Reference)* "'"
         std::string _ParseAttributeValue(std::string_view contents, size_t &index)
         {
-            // TODO:escape character
             auto firstQuotation = contents[index];
             if (firstQuotation != '"' && firstQuotation != '\'')
             {
@@ -394,18 +451,40 @@ namespace Craft
                 return "";
             }
             ++index;
-            auto valueFirstIndex = index;
-            auto valueLastIndex = contents.find_first_of(firstQuotation, valueFirstIndex);
-            if (valueLastIndex == std::string::npos)
-            {
-                _status = AttributeSyntaxError;
-                _errorIndex = index;
-                return "";
-            }
-            index = valueLastIndex + 1;
-            return std::string(contents.substr(valueFirstIndex, valueLastIndex - valueFirstIndex));
-        }
 
+            auto valueFirstIndex = index;
+            std::string attributeValue;
+            while(index < contents.size() && contents[index] != firstQuotation)
+            {
+                if(contents[index] == '&')
+                {
+                    // TODO:add test
+                    // TODO:test if or switch default performance
+                    attributeValue += std::string(contents.substr(valueFirstIndex, index - valueFirstIndex));
+                    ++index;
+                    auto refChar = ParseEntityReference(contents, index);
+                    if(refChar == '\0')
+                    {
+                        _status = EntityReferenceError;
+                        _errorIndex = index;
+                        return "";
+                    }
+                    attributeValue.push_back(refChar);
+                    valueFirstIndex = index;
+                    if(_status != NoError)
+                    {
+                        return "";
+                    }
+                }
+                else
+                {
+                    ++index;
+                }
+            }
+            attributeValue += std::string(contents.substr(valueFirstIndex, index - valueFirstIndex));
+            ++index;
+            return attributeValue;
+        }
 
         // [15]Comment::='<!--' ((Char - '-') | ('-' (Char - '-')))* '-->'
         // <!  incoming index is point to '!'
@@ -435,92 +514,28 @@ namespace Craft
             i += 3;
         }
 
-
-        // TODO:constexpr
-        bool _IsNumber(char c) const
+        [[nodiscard]] constexpr bool _IsNumber(char c) const
         {
             return c > '0' && c < '9';
         }
-//        [66]CharRef ::= '&#' [0-9]+ ';'
-//                | '&#x' [0-9a-fA-F]+ ';'
-        char _ParseCharacterEntity(std::string_view contents, size_t &i)
-        {
-            char c = 0;
-            if(contents[i] == 'l' && contents[i + 1] == 't')
-            {
-                c = '<';
-                i += 2;
-            }
-            else if(contents[i] == 'g' && contents[i + 1] == 't')
-            {
-                c = '>';
-                i += 2;
-            }
-            else if(contents[i] == 'a' && contents[i + 1] == 'm' && contents[i + 2] == 'p')
-            {
-                c = '&';
-                i += 3;
-            }
-            else if(contents[i] == 'a' && contents[i + 1] == 'p' && contents[i + 2] == 'o' && contents[i + 3] == 's')
-            {
-                c = '\'';
-                i += 4;
-            }
-            else if(contents[i] == 'q' && contents[i + 1] == 'u' && contents[i + 2] == 'o' && contents[i + 3] == 't')
-            {
-                c = '"';
-                i += 4;
-            }
-            else if(contents[i] == '#')
-            {
-                i += 1;
-                std::string num;
-                if(contents[i + 1] == 'x')
-                {
-                    i += 1;
-                    auto firstIndex = i;
-                    num = "0x";
-                    while(_IsNumber(contents[i]) ||
-                        (contents[i] > 'A' && contents[i] < 'F'))
-                    {
-                        ++i;
-                        num.push_back(contents[i]);
-                    }
-                    sscanf(num.c_str(), "%x", &c);
-                }
-                else
-                {
-                    auto firstIndex = i;
-                    while(_IsNumber(contents[i]))
-                    {
-                        ++i;
-                        num.push_back(contents[i]);
-                    }
-                    sscanf(num.c_str(), "%d", &c);
-                }
-            }
-            else
-            {
-                _status = CharacterEntityError;
-                _errorIndex = i;
-            }
-            if(contents[i] != ';')
-            {
-                _status = CharacterEntityError;
-                _errorIndex = i;
-            }
-            ++i;
-            return c;
-        }
 
-        void _ParseElementContentData(std::string_view contents, size_t &i, XMLNode& current, size_t firstIndex)
+        // 	[14]CharData	   ::=   	[^<&]* - ([^<&]* ']]>' [^<&]*)
+        //	[67]Reference	   ::=   	EntityRef | CharRef
+        void _ParseElementCharData(std::string_view contents, size_t &i, XMLNode& current, size_t firstIndex)
         {
+            // TODO:change reference, and refactor, same as attribute value
             while(i < contents.size() && contents[i] != '<')
             {
                 if(contents[i] == '&')
                 {
                     ++i;
-                    _ParseCharacterEntity(contents, i);
+                    auto refChar = ParseEntityReference(contents, i);
+                    if( refChar == '\0')
+                    {
+                        _status = EntityReferenceError;
+                        _errorIndex = i;
+                        return;
+                    }
                 }
                 else
                 {
@@ -538,8 +553,6 @@ namespace Craft
         }
 
         // [43]content ::= CharData? ((element | Reference | CDSect | PI | Comment) CharData?)*	/* */
-        // 	[14]CharData	   ::=   	[^<&]* - ([^<&]* ']]>' [^<&]*)
-        //	[67]Reference	   ::=   	EntityRef | CharRef
         //  CDSect : CDATA[21]
         void _ParseElementContent(std::string_view contents, size_t &i, XMLNode& current)
         {
@@ -561,7 +574,7 @@ namespace Craft
                         }
                         else if(contents[i + 1] == '[')
                         {
-                            if(_IsCDATA(contents, i))
+                            if(contents.substr(i, 7) == "[CDATA[")
                             {
                                 i += 8;
                                 _ParseCDATA(contents, i, current);
@@ -585,7 +598,7 @@ namespace Craft
                 }
                 else
                 {
-                    _ParseElementContentData(contents, i, current, firstIndex);
+                    _ParseElementCharData(contents, i, current, firstIndex);
                 }
             }
         }
@@ -772,110 +785,41 @@ namespace Craft
 
         [[nodiscard]] bool _IsDOCTYPE(std::string_view contents, size_t i) const
         {
-            return (contents[i] == 'D' && contents[i + 1] == 'O' && contents[i + 2] == 'C'
-                    && contents[i + 3] == 'T' && contents[i + 4] == 'Y'
-                            && contents[i + 5] == 'P' && contents[i + 6] == 'E' && contents[i + 7] == ' ');
+            return contents.substr(0, 8) == "DOCTYPE ";
         }
 
-        [[nodiscard]] bool _IsELEMENT(std::string_view contents, size_t i) const
+        [[nodiscard]] bool _IsEngLetter(char c) const
         {
-            return contents.substr(0, 10) == "<!ELEMENT ";
+            return (c > 'A' && c < 'Z') || (c > 'a' && c < 'z');
         }
 
-
-        //[75]ExternalID ::= 'SYSTEM' S SystemLiteral
-        //| 'PUBLIC' S PubidLiteral S SystemLiteral
-        //[76]NDataDecl ::= S 'NDATA' S Name
-        std::string _ParseExternalID(std::string_view contents, size_t &index)
-        {
-            // Is SYSTEM
-            // Is PUBLIC
-        }
-
-        void _ParseEntityRef(std::string_view contents, size_t &index)
-        {
-
-        }
-
-        void _ParsePEReference(std::string_view contents, size_t &index)
-        {
-
-        }
-        // TODO:finish
-        // [28]doctypedecl ::= '<!DOCTYPE' S Name (S ExternalID)? S? ('[' (markupdecl | DeclSep)* ']' S?)? '>'	[VC: 根元素类型]
-        // [WFC: 外部子集]
-        // [28a]DeclSep ::= PEReference | S	[WFC: 声明间的参数实体]
-        // [29]markupdecl ::= elementdecl | AttlistDecl | EntityDecl | NotationDecl | PI | Comment	[VC: 严格的声明/参数实体嵌套]
-        // [WFC: 内部子集中的参数实体]
-        // [45]elementdecl
-        // [67]Reference ::= EntityRef | CharRef
-        // [68]EntityRef ::= '&' Name ';'
-        // [69]PEReference ::= '%' Name ';'
-        // 3.2.1 元素型内容
         void _ParseDoctypeDecl(std::string_view contents, size_t &index, XMLNode& current)
         {
-            // read doctype and a space
-            if(!_IsDOCTYPE(contents, index))
+            auto first = index;
+            while(index < contents.size() && contents[index] != '>')
             {
-                _status = DOCTYPESyntaxError;
-                _errorIndex = index;
-                return;
-            }
-            index += 8;
-
-            // parseblank, is zero, then return false
-            _ParseBlank(contents, index);
-            auto docName = _ParseName(contents, index);
-            _ParseBlank(contents, index);
-
-            if(contents[index] == '(')
-            {
-                ++index;
-                _ParseBlank(contents, index);
-                auto exteralID = _ParseExternalID(contents, index);
-                if(contents[index] != ')')
+                if(contents[index] == '[')
                 {
-                    _status = DOCTYPESyntaxError;
-                    _errorIndex = index;
-                    return;
+                    int depth = 1;
+                    while(depth > 0)
+                    {
+                        if (contents[index] == '[')
+                        {
+                            ++depth;
+                        }
+                        else if(contents[index] == ']')
+                        {
+                            --depth;
+                        }
+                        ++index;
+                    }
                 }
                 else
                 {
                     ++index;
                 }
             }
-            if(contents[index] != '[')
-            {
-                _status = DOCTYPESyntaxError;
-                _errorIndex = index;
-                return;
-            }
             ++index;
-            // TODO:standalone shoule be no
-            auto first = index;
-            while(true)
-            {
-                _ParseBlank(contents, index);
-                if(contents[index] == '%')
-                {
-                    // PEReference
-                }
-                //[29]markupdecl ::= elementdecl | AttlistDecl | EntityDecl | NotationDecl | PI | Comment
-//                [52]   	AttlistDecl	   ::=   	'<!ATTLIST' S Name AttDef* S? '>'
-//                [53]   	AttDef	   ::=   	S Name S AttType S DefaultDecl
-
-                if(_IsELEMENT(contents, index))
-                {
-                    index += 10;
-                    // read
-                }
-                _ParseBlank(contents, index);
-                if(contents[index] == ']' && contents[index + 1] == '>')
-                {
-                    index += 2;
-                    break;
-                }
-            }
             auto content = std::string(contents.substr(first, index - first - 2));
             auto newNode = XMLNode("", content, XMLNode::NodeType::NodeDoctype);
             current.AddChild(newNode);
