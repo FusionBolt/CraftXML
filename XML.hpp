@@ -17,6 +17,8 @@
 
 namespace Craft
 {
+    class XMLNodeIterator;
+
     class XMLNode
     {
     protected:
@@ -24,8 +26,12 @@ namespace Craft
 
         friend class XMLDocument;
         friend class XMLParser;
+        friend class XMLNodeIterator;
 
         XMLNode(std::shared_ptr<XMLNodeStruct> node) : _node(std::move(node))
+        {}
+
+        XMLNode(std::weak_ptr<XMLNodeStruct> node) : _node(node.lock())
         {}
 
     public:
@@ -39,8 +45,7 @@ namespace Craft
             NodeDeclaration,
             NodePI
         };
-
-        using XMLNodeIterator = std::vector<XMLNode>::iterator;
+        using Iterator = XMLNodeIterator;
         using XMLNodes = std::vector<XMLNode>;
 
         XMLNode(std::string tag = "", std::string content = "", NodeType type = NodeElement) :
@@ -54,19 +59,46 @@ namespace Craft
 
         virtual ~XMLNode() = default;
 
-        XMLNodeIterator begin() noexcept
+        Iterator begin() noexcept;
+
+        Iterator end() noexcept;
+
+        // node modified
+        void AddChild(XMLNode &child)
         {
-            return _node->_children.begin();
+            if(_node->_firstChild == _node->_lastChild)
+            {
+                // firstChild->next default nullptr
+                // firstChild->prev default reset()
+                // lastChild default point to firstChild(a empty node)
+                // so lastChild->next default nullptr
+                _node->_firstChild = child._node;
+                _node->_firstChild->_next = _node->_lastChild;
+                _node->_lastChild->_prev = _node->_firstChild;
+                // do in constructor
+                // _node->_firstChild->_prev.reset();
+                // _node->_lastChild->_next = nullptr;
+            }
+            else
+            {
+                child._node->_prev = _node->_lastChild->_prev;
+                child._node->_next = _node->_lastChild;
+                _node->_lastChild->_prev.lock()->_next = child._node;
+                _node->_lastChild->_prev = child._node;
+            }
+            child._node->_parent = _node;
         }
 
-        XMLNodeIterator end() noexcept
+        // Set
+        void SetParent(XMLNode &parent)
         {
-            return _node->_children.end();
+            _node->_parent = parent._node;
+            parent.AddChild(*this);
         }
 
-        [[nodiscard]] XMLNodes operator[](const std::string& TagName) const
+        void SetNodeTag(std::string tag)
         {
-            return FindChildrenByTagName(TagName);
+            _node->_tag = std::move(tag);
         }
 
         void SetNodeType(NodeType type) noexcept
@@ -74,83 +106,88 @@ namespace Craft
             _node->_type = type;
         }
 
-        [[nodiscard]] std::string GetTag() const
+        void SetNodeContent(std::string context)
         {
-            return _node->_tag;
+            _node->_content = std::move(context);
         }
 
-        [[nodiscard]] std::string GetContent() const
-        {
-            return _node->_content;
-        }
-
-        [[nodiscard]] NodeType GetType() const
-        {
-            return _node->_type;
-        }
-
-        [[nodiscard]] std::map<std::string, std::string> GetAttributes() const
-        {
-            return _node->_attributes;
-        }
-
-        [[nodiscard]] std::string GetAttribute(const std::string& attributeName) const
-        {
-            return _node->_attributes[attributeName];
-        }
-
-        [[nodiscard]] bool HasChild() const noexcept
-        {
-            return !_node->_children.empty();
-        }
-
-        void AddChild(XMLNode &child)
-        {
-            assert(child._node != nullptr);
-            child.SetParent(*this);
-        }
-
-        void AddAttribute(const std::string &name, const std::string &value)
+        void AddNodeAttribute(const std::string &name, const std::string &value)
         {
             _node->_attributes[name] = value;
         }
 
-        [[nodiscard]] std::vector<XMLNode> Children() const
+        // Get
+        [[nodiscard]] std::string GetNodeTag() const
         {
-            return _node->_children;
+            return _node->_tag;
         }
 
-        void SetParent(XMLNode &parent)
+        [[nodiscard]] NodeType GetNodeType() const
         {
-            assert(parent._node != nullptr);
-            _node->_parent = parent._node;
-            parent._node->_children.push_back(*this);
+            return _node->_type;
         }
 
+        [[nodiscard]] std::string GetNodeContent() const
+        {
+            return _node->_content;
+        }
+
+        [[nodiscard]] std::string GetNodeAttribute(const std::string& attributeName) const
+        {
+            return _node->_attributes[attributeName];
+        }
+
+        [[nodiscard]] std::map<std::string, std::string> GetNodeAttributes() const
+        {
+            return _node->_attributes;
+        }
+
+        [[nodiscard]] bool HasChild() const noexcept
+        {
+            return _node->_firstChild != _node->_lastChild;
+        }
+
+        // Node Accessor
         [[nodiscard]] XMLNode GetParent() const noexcept
         {
             return XMLNode(_node->_parent.lock());
         }
 
-        void SetContent(std::string context)
+        [[nodiscard]] XMLNode NextSibling() const
         {
-            _node->_content = std::move(context);
+            return _node->_next != _node->_lastChild ? _node->_next : XMLNode();
+        }
+
+        [[nodiscard]] XMLNode PrevSibling() const
+        {
+            return _node->_prev.lock() != _node->_lastChild ? _node->_next : XMLNode();
+        }
+
+        [[nodiscard]] XMLNodes operator[](const std::string& TagName) const
+        {
+            return FindChildrenByTagName(TagName);
         }
 
         [[nodiscard]] XMLNode FirstChild() const
         {
-            return _node->_children[0];
+            return _node->_firstChild != _node->_lastChild ? _node->_firstChild : XMLNode();
+        }
+
+        [[nodiscard]] XMLNode LastChild() const
+        {
+            return _node->_firstChild != _node->_lastChild ? _node->_lastChild->_prev : XMLNode();
         }
 
         [[nodiscard]] XMLNode FindFirstChildByTagName(const std::string &tagName) const
         {
-            // performance compare
-            for (auto &child : _node->_children)
+            auto first = _node->_firstChild;
+            while(first != _node->_lastChild)
             {
-                if (child.GetTag() == tagName)
+                if(first->_tag == tagName)
                 {
-                    return child;
+                    return first;
                 }
+                first = first->_next;
             }
             return XMLNode();
         }
@@ -158,12 +195,43 @@ namespace Craft
         [[nodiscard]] XMLNodes FindChildrenByTagName(const std::string &tagName) const
         {
             XMLNodes children;
-            for (auto &child : _node->_children)
+            auto first = _node->_firstChild;
+            while(first != _node->_lastChild)
             {
-                if (child.GetTag() == tagName)
+                if(first->_tag == tagName)
                 {
-                    children.push_back(child);
+                    children.push_back(first);
                 }
+                first = first->_next;
+            }
+            return children;
+        }
+
+        [[nodiscard]] XMLNode FindFirstChildByType(NodeType type) const
+        {
+            auto first = _node->_firstChild;
+            while(first != _node->_lastChild)
+            {
+                if(first->_type == type)
+                {
+                    return first;
+                }
+                first = first->_next;
+            }
+            return XMLNode();
+        }
+
+        [[nodiscard]] XMLNodes FindChildrenByType(NodeType type) const
+        {
+            XMLNodes children;
+            auto first = _node->_firstChild;
+            while(first != _node->_lastChild)
+            {
+                if(first->_type == type)
+                {
+                    children.push_back(first);
+                }
+                first = first->_next;
             }
             return children;
         }
@@ -172,38 +240,93 @@ namespace Craft
         {
             return _node->_content;
         }
-
-        void output() const noexcept
-        {
-            for (auto &c : _node->_children)
-            {
-                std::cout << "<" << c._node->_tag << ">" << std::endl;
-                std::cout << c._node->_content << std::endl;
-                c.output();
-                std::cout << "<\\" << c._node->_tag << ">" << std::endl;
-            }
-        }
-
     protected:
         struct XMLNodeStruct
         {
             XMLNodeStruct() = default;
 
             XMLNodeStruct(std::string tag, std::string content, NodeType type, const std::shared_ptr<XMLNodeStruct>& parent = nullptr) :
-                    _tag(std::move(tag)), _content(std::move(content)), _type(type), _parent(parent)
-            {}
+                    _tag(std::move(tag)), _content(std::move(content)), _type(type), _parent(parent), _prev(), _next(nullptr),
+                    _firstChild(std::make_shared<XMLNodeStruct>())
+            {
+                _lastChild = _firstChild;
+            }
 
+            // smart pointer rule to prevent circular reference
+            // parent to child : shared_ptr
+            // child to parent : weak_ptr
+            // next : shared_ptr
+            // prev : weak_ptr
+
+            // not circular list
             std::map<std::string, std::string> _attributes;
             std::string _tag, _content;
-            XMLNodes _children;
             NodeType _type;
-            // std::shared_ptr<XMLNodeStruct> _parent;
             std::weak_ptr<XMLNodeStruct> _parent;
+            std::shared_ptr<XMLNodeStruct> _firstChild;
+            std::shared_ptr<XMLNodeStruct> _lastChild;
+            std::weak_ptr<XMLNodeStruct> _prev;
+            std::shared_ptr<XMLNodeStruct> _next;
         };
 
         std::shared_ptr<XMLNodeStruct> _node;
     };
 
+    class XMLNodeIterator
+    {
+    public:
+        XMLNodeIterator() = default;
+
+        XMLNodeIterator(const XMLNode &node)
+        {
+            _root = node;
+        }
+
+        bool operator==(const XMLNodeIterator &other) const
+        {
+            return _root._node == other._root._node;
+        }
+
+        bool operator!=(const XMLNodeIterator &other) const
+        {
+            return _root._node != other._root._node;
+        }
+
+        XMLNodeIterator operator++()
+        {
+            _root._node = _root._node->_next;
+            return *this;
+        }
+
+        XMLNodeIterator operator--()
+        {
+            _root._node = _root._node->_prev.lock();
+            return *this;
+        }
+
+        XMLNode& operator*()
+        {
+            return _root;
+        }
+
+        XMLNode* operator->()
+        {
+            return &_root;
+        }
+
+    private:
+        XMLNode _root;
+    };
+
+    XMLNode::Iterator XMLNode::begin() noexcept
+    {
+        return Craft::XMLNode::Iterator(_node->_firstChild);
+    }
+
+    XMLNode::Iterator XMLNode::end() noexcept
+    {
+        return Craft::XMLNode::Iterator(_node->_lastChild);
+    }
 
     class XMLParser
     {
@@ -418,13 +541,13 @@ namespace Craft
                 return;
             }
             i += 2;
-            if(newChild.GetAttributes()["standalone"].empty())
+            if(newChild.GetNodeAttributes()["standalone"].empty())
             {
-                newChild.AddAttribute("standalone", "no");
+                newChild.AddNodeAttribute("standalone", "no");
             }
-            auto standalone = newChild.GetAttributes()["standalone"];
+            auto standalone = newChild.GetNodeAttributes()["standalone"];
             // standard 2.9
-            if(_status != NoError || newChild.GetAttributes()["version"].empty() || !(standalone == "yes" || standalone == "no"))
+            if(_status != NoError || newChild.GetNodeAttributes()["version"].empty() || !(standalone == "yes" || standalone == "no"))
             {
                 _status = DeclarationSyntaxError;
                 return;
@@ -458,8 +581,6 @@ namespace Craft
             {
                 if(contents[index] == '&')
                 {
-                    // TODO:add test
-                    // TODO:test if or switch default performance
                     attributeValue += std::string(contents.substr(valueFirstIndex, index - valueFirstIndex));
                     ++index;
                     auto refChar = ParseEntityReference(contents, index);
@@ -521,13 +642,15 @@ namespace Craft
 
         // 	[14]CharData	   ::=   	[^<&]* - ([^<&]* ']]>' [^<&]*)
         //	[67]Reference	   ::=   	EntityRef | CharRef
-        void _ParseElementCharData(std::string_view contents, size_t &i, XMLNode& current, size_t firstIndex)
+        void _ParseElementCharData(std::string_view contents, size_t &i, XMLNode& current)
         {
-            // TODO:change reference, and refactor, same as attribute value
+            auto firstIndex = i;
+            std::string charData;
             while(i < contents.size() && contents[i] != '<')
             {
                 if(contents[i] == '&')
                 {
+                    charData += std::string(contents.substr(firstIndex, i - firstIndex));
                     ++i;
                     auto refChar = ParseEntityReference(contents, i);
                     if( refChar == '\0')
@@ -536,19 +659,22 @@ namespace Craft
                         _errorIndex = i;
                         return;
                     }
+                    charData.push_back(refChar);
+                    firstIndex = i;
                 }
                 else
                 {
                     ++i;
                 }
             }
-            auto contentData = std::string(contents.substr(firstIndex, i - firstIndex));
-            auto newChild = XMLNode("", contentData,
+
+            charData += std::string(contents.substr(firstIndex, i - firstIndex));
+            auto newChild = XMLNode("", charData,
                     XMLNode::NodeType::NodeData);
             current.AddChild(newChild);
-            if(current.GetContent().empty())
+            if(current.GetNodeContent().empty())
             {
-                current.SetContent(contentData);
+                current.SetNodeContent(charData);
             }
         }
 
@@ -574,7 +700,7 @@ namespace Craft
                         }
                         else if(contents[i + 1] == '[')
                         {
-                            if(contents.substr(i, 7) == "[CDATA[")
+                            if(contents.substr(i + 1, 7) == "[CDATA[")
                             {
                                 i += 8;
                                 _ParseCDATA(contents, i, current);
@@ -598,7 +724,7 @@ namespace Craft
                 }
                 else
                 {
-                    _ParseElementCharData(contents, i, current, firstIndex);
+                    _ParseElementCharData(contents, i, current);
                 }
             }
         }
@@ -646,14 +772,14 @@ namespace Craft
                 }
 
                 // repeat attribute check
-                auto attr = newNode.GetAttributes();
+                auto attr = newNode.GetNodeAttributes();
                 if (attr.find(attributeName) != attr.end())
                 {
                     _status = AttributeRepeatError;
                     _errorIndex = index;
                     return;
                 }
-                newNode.AddAttribute(attributeName, attributeValue);
+                newNode.AddNodeAttribute(attributeName, attributeValue);
             }
         }
 
@@ -776,10 +902,12 @@ namespace Craft
                 auto newNode = XMLNode("", std::string(contents.substr(first, index - first)),
                         XMLNode::NodeType::NodeCData);
                 current.AddChild(newNode);
+                index += 3;
             }
             else
             {
                 _status = CDATASyntaxError;
+                _errorIndex = index;
             }
         }
 
@@ -1029,11 +1157,11 @@ namespace Craft
                 return root;
             }
 
-            root.SetContent("");
+            root.SetNodeContent("");
             assert(root.GetParent()._node == nullptr);
-            assert(root.GetTag().empty());
-            assert(root.GetContent().empty());
-            assert(root.GetAttributes().empty());
+            assert(root.GetNodeTag().empty());
+            assert(root.GetNodeContent().empty());
+            assert(root.GetNodeAttributes().empty());
             return root;
         }
 

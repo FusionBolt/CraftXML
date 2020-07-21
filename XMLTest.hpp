@@ -10,7 +10,7 @@ using namespace Craft;
 #define DEBUG_INFO std::cout << "ErrorLine:" << __LINE__ << \
                          " ErrorFunction:" << __FUNCTION__ << std::endl;
 
-#define ERROR_INFO(Val1, Val2) std::cout << "Expect Val:" << Val2 << " Actual Val:" << Val1 << std::endl;\
+#define ERROR_INFO(Val1, Val2) std::cout << "Expect Val:" << Val2 << "\nActual Val:" << Val1 << std::endl;\
                                 DEBUG_INFO;
 #define ERROR_STR_OUTPUT(InputStr) std::cout << "Error Str:" << InputStr << "\nParseErrorType:" <<\
                          result.ErrorInfo() << std::endl;DEBUG_INFO;
@@ -29,16 +29,44 @@ using namespace Craft;
 
 #define ASSERT_NO_ERROR_PARSE_STRING(str) LOAD_PARSE_STRING(str, XMLParser::NoError)
 
+bool NodeStructTest()
+{
+    XMLNode root;
+    XMLNode n1("tag1");
+    XMLNode n2("tag2");
+    XMLNode n3("tag3");
+    XMLNode n4("tag4");
+    XMLNode n5("tag5");
+    XMLNode n6("tag6");
+    n1.AddChild(n2);
+    n1.AddChild(n3);
+    root.AddChild(n1);
+    root.AddChild(n4);
+    n2.AddChild(n5);
+    n2.AddChild(n6);
+    auto newN1 = root.FirstChild();
+    ASSERT_EQ(newN1.GetNodeTag(), "tag1")
+    auto newN2 = newN1.FirstChild();
+    ASSERT_EQ(newN2.GetNodeTag(), "tag2")
+    ASSERT_EQ(newN2.NextSibling().GetNodeTag(), "tag3")
+    ASSERT_EQ(newN1.NextSibling().GetNodeTag(), "tag4")
+    auto newN5 = newN2.FirstChild();
+    ASSERT_EQ(newN5.GetNodeTag(), "tag5")
+    ASSERT_EQ(newN5.NextSibling().GetNodeTag(), "tag6")
+    return true;
+}
+
 bool OneTagTest1()
 {
     ASSERT_NO_ERROR_PARSE_STRING("<hr />")
     ASSERT_FALSE(document.FindChildrenByTagName("hr").empty())
     return true;
 }
+
 bool OneTagTest2()
 {
     ASSERT_NO_ERROR_PARSE_STRING("<tag attr=\"test\" />");
-    auto attr = document.FirstChild().GetAttributes();
+    auto attr = document.FirstChild().GetNodeAttributes();
     ASSERT_TRUE(!attr.empty())
     ASSERT_EQ(attr["attr"], "test")
     return true;
@@ -60,6 +88,32 @@ bool ContentTest()
     return true;
 }
 
+bool ContentEntityRefTest()
+{
+    ASSERT_NO_ERROR_PARSE_STRING("<tag>content&lt;contents</tag>")
+    auto elements = document.FindChildrenByTagName("tag");
+    ASSERT_FALSE(elements.empty());
+    ASSERT_EQ(elements[0].StringValue(), "content<contents")
+    return true;
+}
+
+bool ContentCDATATest()
+{
+    ASSERT_NO_ERROR_PARSE_STRING("<script>text1\n"
+                                 "<![CDATA["
+                                 "<message> Welcome to TutorialsPoint </message>"
+                                 "]]>text2"
+                                 "</script>")
+    auto scriptNode = document.FindFirstChildByTagName("script");
+    ASSERT_EQ(scriptNode.GetNodeContent(), "text1\n")
+    ASSERT_EQ(scriptNode.FindFirstChildByType(XMLNode::NodeCData).GetNodeContent(),
+              "<message> Welcome to TutorialsPoint </message>");
+    auto dataNode = scriptNode.FindChildrenByType(XMLNode::NodeData);
+    ASSERT_EQ(dataNode[0].GetNodeContent(), "text1\n")
+    ASSERT_EQ(dataNode[1].GetNodeContent(), "text2")
+    return true;
+}
+
 bool EntityReferenceTest()
 {
 #define ENTITY_OK(Str, Char) i = 1;ASSERT_EQ(p.ParseEntityReference(Str, i), Char)
@@ -76,7 +130,7 @@ bool EntityReferenceTest()
 bool CommentTest()
 {
     ASSERT_NO_ERROR_PARSE_STRING("<!--tag-->")
-    ASSERT_EQ(document.FindFirstChildByTagName("").GetContent(), "tag")
+    ASSERT_EQ(document.FindFirstChildByTagName("").GetNodeContent(), "tag")
     return true;
 }
 
@@ -89,7 +143,7 @@ bool CommentSyntaxErrorTest()
 bool DeclarationTest()
 {
      ASSERT_NO_ERROR_PARSE_STRING("<?xml version=\"1.0\" standalone='yes'?>")
-     auto attributes = document.FirstChild().GetAttributes();
+     auto attributes = document.FirstChild().GetNodeAttributes();
      ASSERT_EQ(attributes["version"], "1.0")
      ASSERT_EQ(attributes["standalone"], "yes")
      return true;
@@ -108,9 +162,9 @@ bool PrologTest()
 {
     ASSERT_NO_ERROR_PARSE_STRING("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
                 "<?welcome to pg=10 of tutorials point?>")
-    ASSERT_EQ(document.FindFirstChildByTagName("welcome").GetContent(),
+    ASSERT_EQ(document.FindFirstChildByTagName("welcome").GetNodeContent(),
             "to pg=10 of tutorials point")
-    auto attrs = document.FindFirstChildByTagName("").GetAttributes();
+    auto attrs = document.FindFirstChildByTagName("").GetNodeAttributes();
     ASSERT_EQ(attrs["version"], "1.0")
     ASSERT_EQ(attrs["encoding"], "UTF-8")
     return true;
@@ -127,7 +181,7 @@ bool PrologErrorTest()
 bool OneAttributeTest()
 {
     ASSERT_NO_ERROR_PARSE_STRING("<tag attr =   \"first\"></tag>")
-    auto attr = document.FirstChild().GetAttributes();
+    auto attr = document.FirstChild().GetNodeAttributes();
     ASSERT_EQ(attr.size(), 1)
     ASSERT_EQ(attr["attr"], "first")
     return true;
@@ -136,7 +190,7 @@ bool OneAttributeTest()
 bool AttributeQuoteTest()
 {
     ASSERT_NO_ERROR_PARSE_STRING("<tag attr =   \'first\'></tag>")
-    auto attr = document.FirstChild().GetAttributes();
+    auto attr = document.FirstChild().GetNodeAttributes();
     ASSERT_EQ(attr.size(), 1)
     ASSERT_EQ(attr["attr"], "first")
     return true;
@@ -145,7 +199,7 @@ bool AttributeQuoteTest()
 bool MultiAttributeTest()
 {
     ASSERT_NO_ERROR_PARSE_STRING(R"(<tag attr = "first"   att ="second" at= "third"></tag>)")
-    auto attr = document.FirstChild().GetAttributes();
+    auto attr = document.FirstChild().GetNodeAttributes();
     ASSERT_EQ(attr.size(), 3)
     ASSERT_EQ(attr["attr"], "first")
     ASSERT_EQ(attr["att"], "second")
@@ -198,7 +252,6 @@ bool TagBadCloseError()
     ASSERT_PARSE_STRING("<tag", XMLParser::TagBadCloseError)
     return true;
 }
-
 bool OperatorOverLoadTest()
 {
     ASSERT_NO_ERROR_PARSE_STRING("<tag1></tag1><tag1></tag1><tag2></tag2>")
@@ -212,6 +265,8 @@ inline std::map<std::string, std::function<bool(void)>> testFunction;
 
 void TestBind()
 {
+    testFunction["NodeStructTest"] = NodeStructTest;
+
     testFunction["PrologTest"] = PrologTest;
     testFunction["PrologErrorTest"] = PrologErrorTest;
 
@@ -222,6 +277,7 @@ void TestBind()
     testFunction["OneTagTest2"] = OneTagTest2;
     testFunction["OnePairTagTest"] = OnePairTagTest;
     testFunction["ContentTest"] = ContentTest;
+    testFunction["ContentEntityRefTest"] = ContentEntityRefTest;
     testFunction["TagSyntaxErrorTest"] = TagSyntaxErrorTest;
     testFunction["TagSpaceTest"] = TagSpaceTest;
     testFunction["TagBadCloseError"] = TagBadCloseError;
@@ -234,6 +290,8 @@ void TestBind()
     testFunction["AttributeQuoteTest"] = AttributeQuoteTest;
     testFunction["MultiAttributeTest"] = MultiAttributeTest;
     testFunction["AttributeErrorTest"] = AttributeErrorTest;
+
+    testFunction["ContentCDATATest"] = ContentCDATATest;
 
     testFunction["FileOpenFailedTest"] = FileOpenFailedTest;
     testFunction["OperatorOverLoadTest"] = OperatorOverLoadTest;
