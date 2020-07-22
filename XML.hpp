@@ -40,10 +40,11 @@ namespace Craft
             NodeElement,
             NodeData,
             NodeCData,
-            NodeCommet,
+            NodeComment,
             NodeDoctype,
             NodeDeclaration,
-            NodePI
+            NodePI,
+            NullNode // Is Empty
         };
         using Iterator = XMLNodeIterator;
         using XMLNodes = std::vector<XMLNode>;
@@ -62,6 +63,12 @@ namespace Craft
         Iterator begin() noexcept;
 
         Iterator end() noexcept;
+
+        // empty node, when can't find child then will return empty node
+        [[nodiscard]] bool IsEmpty() const noexcept
+        {
+            return _node->_type == NullNode;
+        }
 
         // node modified
         void AddChild(XMLNode &child)
@@ -155,12 +162,12 @@ namespace Craft
 
         [[nodiscard]] XMLNode NextSibling() const
         {
-            return _node->_next != _node->_lastChild ? _node->_next : XMLNode();
+            return _node->_next != _node->_lastChild ? _node->_next : XMLNode(NullNode);
         }
 
         [[nodiscard]] XMLNode PrevSibling() const
         {
-            return _node->_prev.lock() != _node->_lastChild ? _node->_next : XMLNode();
+            return _node->_prev.lock() != _node->_lastChild ? _node->_next : XMLNode(NullNode);
         }
 
         [[nodiscard]] XMLNodes operator[](const std::string& TagName) const
@@ -170,12 +177,12 @@ namespace Craft
 
         [[nodiscard]] XMLNode FirstChild() const
         {
-            return _node->_firstChild != _node->_lastChild ? _node->_firstChild : XMLNode();
+            return _node->_firstChild != _node->_lastChild ? _node->_firstChild : XMLNode(NullNode);
         }
 
         [[nodiscard]] XMLNode LastChild() const
         {
-            return _node->_firstChild != _node->_lastChild ? _node->_lastChild->_prev : XMLNode();
+            return _node->_firstChild != _node->_lastChild ? _node->_lastChild->_prev : XMLNode(NullNode);
         }
 
         [[nodiscard]] XMLNode FindFirstChildByTagName(const std::string &tagName) const
@@ -189,7 +196,7 @@ namespace Craft
                 }
                 first = first->_next;
             }
-            return XMLNode();
+            return XMLNode(NodeType::NullNode);
         }
 
         [[nodiscard]] XMLNodes FindChildrenByTagName(const std::string &tagName) const
@@ -218,7 +225,7 @@ namespace Craft
                 }
                 first = first->_next;
             }
-            return XMLNode();
+            return XMLNode(NodeType::NullNode);
         }
 
         [[nodiscard]] XMLNodes FindChildrenByType(NodeType type) const
@@ -250,6 +257,7 @@ namespace Craft
                     _firstChild(std::make_shared<XMLNodeStruct>())
             {
                 _lastChild = _firstChild;
+                _lastChild->_type = NullNode;
             }
 
             // smart pointer rule to prevent circular reference
@@ -358,7 +366,7 @@ namespace Craft
             if (!file.is_open())
             {
                 _status = FileOpenFailed;
-                return XMLNode();
+                return XMLNode(XMLNode::NodeType::NullNode);
             }
             std::string contents((std::istreambuf_iterator<char>(file)),
                                  std::istreambuf_iterator<char>());
@@ -386,9 +394,9 @@ namespace Craft
         // [67]Reference ::= EntityRef | CharRef
         // [68]EntityRef ::= '&' Name ';'
         // [69]PEReference ::= '%' Name ';'
-        char ParseEntityReference(std::string_view contents, size_t &i)
+        char ParseCharReference(std::string_view contents, size_t &i)
         {
-            char c = 0;
+            char c = '\0';
             if(contents[i] == 'l' && contents[i + 1] == 't')
             {
                 c = '<';
@@ -416,30 +424,28 @@ namespace Craft
             }
             else if(contents[i] == '#')
             {
-                i += 1;
+                ++i;
                 std::string num;
-                if(contents[i + 1] == 'x')
+                if(contents[i] == 'x')
                 {
-                    i += 1;
-                    auto firstIndex = i;
+                    ++i;
                     num = "0x";
                     while(_IsNumber(contents[i]) ||
-                          (contents[i] > 'A' && contents[i] < 'F'))
+                          (contents[i] >= 'A' && contents[i] <= 'F'))
                     {
                         ++i;
                         num.push_back(contents[i]);
                     }
-                    sscanf(num.c_str(), "%x", &c);
+                    c = static_cast<char>(strtol(num.c_str(), nullptr, 16));
                 }
                 else
                 {
-                    auto firstIndex = i;
                     while(_IsNumber(contents[i]))
                     {
-                        ++i;
                         num.push_back(contents[i]);
+                        ++i;
                     }
-                    sscanf(num.c_str(), "%d", &c);
+                    c = static_cast<char>(std::stoi(num));
                 }
             }
             else
@@ -560,6 +566,7 @@ namespace Craft
         {
             // not 0 is find, may be in
             index = contents.find_first_not_of(Blank, index);
+            index = index == std::string::npos ? contents.size() : index;
         }
 
 //        [10]AttValue ::= '"' ([^<&"] | Reference)* '"'
@@ -583,7 +590,7 @@ namespace Craft
                 {
                     attributeValue += std::string(contents.substr(valueFirstIndex, index - valueFirstIndex));
                     ++index;
-                    auto refChar = ParseEntityReference(contents, index);
+                    auto refChar = ParseCharReference(contents, index);
                     if(refChar == '\0')
                     {
                         _status = EntityReferenceError;
@@ -630,14 +637,14 @@ namespace Craft
                 ++i; // is char
             }
             auto newNode = XMLNode("", std::string(contents.substr(commentFirst, i - commentFirst)),
-                                   XMLNode::NodeType::NodeCommet);
+                                   XMLNode::NodeType::NodeComment);
             current.AddChild(newNode);
             i += 3;
         }
 
         [[nodiscard]] constexpr bool _IsNumber(char c) const
         {
-            return c > '0' && c < '9';
+            return c >= '0' && c <= '9';
         }
 
         // 	[14]CharData	   ::=   	[^<&]* - ([^<&]* ']]>' [^<&]*)
@@ -652,7 +659,7 @@ namespace Craft
                 {
                     charData += std::string(contents.substr(firstIndex, i - firstIndex));
                     ++i;
-                    auto refChar = ParseEntityReference(contents, i);
+                    auto refChar = ParseCharReference(contents, i);
                     if( refChar == '\0')
                     {
                         _status = EntityReferenceError;
@@ -692,7 +699,6 @@ namespace Craft
                     if(contents[i + 1] == '!')
                     {
                         ++i;
-                        // TODO:test  content node content
                         if(contents[i + 1] == '-' && contents[i + 2] == '-')
                         {
                             i += 3;
@@ -740,7 +746,7 @@ namespace Craft
                 // so _ParseBlank can't set index = std::string::pos
                 _ParseBlank(contents, index);
                 // tag end
-                if (contents[index] == '>' || contents[index] == '/')
+                if (contents[index] == '>' || contents[index] == '/' || contents[index] == '?')
                 {
                     return;
                 }
@@ -871,6 +877,7 @@ namespace Craft
             if (contents[i] != '>')
             {
                 _status = TagBadCloseError;
+                _errorIndex = i;
                 return;
             }
             auto stackTop = tagStack.top();
@@ -929,6 +936,7 @@ namespace Craft
                 if(contents[index] == '[')
                 {
                     int depth = 1;
+                    index++;
                     while(depth > 0)
                     {
                         if (contents[index] == '[')
@@ -977,7 +985,7 @@ namespace Craft
                             index += 2;
                             _ParseComment(contents, index, current);
                         }
-                        else if (contents[index + 2] == 'D')
+                        else if (contents[index] == 'D')
                         {
                             index += 2;
                             _ParseDoctypeDecl(contents, index, current);
@@ -1071,66 +1079,6 @@ namespace Craft
             }
         }
 
-        // [39]element	::= EmptyElemTag |
-        //              STag content ETag
-        void _ParseElement(std::string_view contents, size_t &i, XMLNode& current, std::stack<std::string>& tagStack)
-        {
-            // tag start
-            if (contents[i] == '<')
-            {
-                ++i;
-                switch (contents[i])
-                {
-                    case '?':
-                        // declaration must be first line which not null
-                        if(_IsXMLDeclarationStart(contents, i - 1))
-                        {
-                            _status = DeclarationPositionError;
-                        }
-                        else
-                        {
-                            ++i;
-                            _ParsePI(contents, i, current);
-                        }
-                        return;
-                    case '/': // end tag </tag>
-                        i += 1;
-                        _ParseEndTag(contents, i, current, tagStack);
-                        break;
-                    default: // <tag>
-                        auto isEmptyTag = false;
-                        _ParseStartTag(contents, i, current, tagStack, isEmptyTag);
-                        if(_status != NoError)
-                        {
-                            return;
-                        }
-                        if(isEmptyTag)
-                        {
-                            return;
-                        }
-                        _ParseElementContent(contents, i, current);
-                        if(_status != NoError)
-                        {
-                            return;
-                        }
-                        if(contents[i + 1] != '/')
-                        {
-                            _ParseElement(contents, i, current, tagStack);
-                        }
-                        else
-                        {
-                            i += 2;
-                            _ParseEndTag(contents, i, current, tagStack);
-                        }
-                }
-            }
-            else
-            {
-                _status = ElementSyntaxError;
-                _errorIndex = i;
-            }
-        }
-
         XMLNode _Parse(std::string_view contents)
         {
             auto root = XMLNode(XMLNode::NodeType::NodeDocument);
@@ -1142,12 +1090,57 @@ namespace Craft
             auto current = root;
             while (i < contents.size())
             {
-                if(_status != NoError)
+                if (contents[i] == '<')
                 {
-                    return root;
+                    ++i;
+                    switch (contents[i])
+                    {
+                        case '?':
+                            // declaration must be first line which not null
+                            if(_IsXMLDeclarationStart(contents, i - 1))
+                            {
+                                _status = DeclarationPositionError;
+                                _errorIndex = i;
+                            }
+                            else
+                            {
+                                ++i;
+                                _ParsePI(contents, i, current);
+                            }
+                            break;
+                        case '/': // end tag </tag>
+                            i += 1;
+                            _ParseEndTag(contents, i, current, tagStack);
+                            break;
+                        case '!':
+                            if(contents[i + 1] == '-' && contents[i + 2] == '-')
+                            {
+                                i += 3;
+                                _ParseComment(contents, i, current);
+                            }
+                            break;
+                        default: // <tag>
+                            auto isEmptyTag = false;
+                            _ParseStartTag(contents, i, current, tagStack, isEmptyTag);
+                            if(_status != NoError)
+                            {
+                                return root;
+                            }
+                            if(isEmptyTag)
+                            {
+                                return root;
+                            }
+                            _ParseElementContent(contents, i, current);
+                            if(_status != NoError)
+                            {
+                                return root;
+                            }
+                    }
                 }
-                _ParseElement(contents, i, current, tagStack);
-                _ParseBlank(contents, i);
+                else
+                {
+                    _ParseElementContent(contents, i, current);
+                }
             }
 
             if (current._node != root._node)
@@ -1237,6 +1230,22 @@ namespace Craft
             XMLParser parser;
             _node = parser.ParseString(str)._node;
             return XMLParserResult(parser.Status(), parser.ErrorIndex());
+        }
+    };
+
+    class XMLWriter
+    {
+        void Writer(XMLDocument& node)
+        {
+            if(node.GetNodeType() != XMLNode::NodeDocument)
+            {
+                return;
+            }
+            auto child = node.FindFirstChildByType(XMLNode::NodeDeclaration);
+            if(child.GetNodeType() != XMLNode::NullNode)
+            {
+
+            }
         }
     };
 }
