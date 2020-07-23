@@ -3,15 +3,28 @@
 //
 #include <iostream>
 
-#include "XML.hpp"
+#include "CraftXML.hpp"
 
 using namespace Craft;
+
+#ifndef _WIN32
+#define RED     "\033[31m"
+#define RESET   "\033[0m"
+#else
+#define RED ""
+#define RESET ""
+#endif
 
 #define DEBUG_INFO std::cout << "ErrorLine:" << __LINE__ << \
                          " ErrorFunction:" << __FUNCTION__ << std::endl;
 
-#define ERROR_INFO(Val1, Val2) std::cout << "Expect Val:" << Val2 << "\nActual Val:" << Val1 << std::endl;\
-                                DEBUG_INFO;
+#define OUTPUT_DIFF_VAL(Val1, Val2) std::cout << "Expect Val:" << Val2 << "\nActual Val:" << Val1 << std::endl;
+
+#define ERROR_INFO(Val1, Val2) std::cout << RED << "-----------------------------------" << std::endl; \
+                                OUTPUT_DIFF_VAL(Val1, Val2)\
+                                DEBUG_INFO;\
+                                std::cout << "-----------------------------------" << RESET << std::endl;
+
 #define ERROR_STR_OUTPUT(InputStr) std::cout << "Error Str:" << InputStr << "\nParseErrorType:" <<\
                          result.ErrorInfo() << std::endl;DEBUG_INFO;
 
@@ -68,7 +81,7 @@ bool OneTagTest2()
     ASSERT_NO_ERROR_PARSE_STRING("<tag attr=\"test\" />");
     auto attr = document.FirstChild().GetNodeAttributes();
     ASSERT_TRUE(!attr.empty())
-    ASSERT_EQ(attr["attr"], "test")
+    ASSERT_EQ(attr["attr"], "test1")
     return true;
 }
 
@@ -88,12 +101,21 @@ bool ContentTest()
     return true;
 }
 
-bool ContentEntityRefTest()
+bool ContentCharRefTest()
 {
     ASSERT_NO_ERROR_PARSE_STRING("<tag>content&lt;contents</tag>")
     auto elements = document.FindChildrenByTagName("tag");
     ASSERT_FALSE(elements.empty());
     ASSERT_EQ(elements[0].StringValue(), "content<contents")
+    return true;
+}
+
+bool ContentReferenceTest()
+{
+    ASSERT_NO_ERROR_PARSE_STRING("<tag>content&ref;contents</tag>")
+    auto element = document.FirstChild();
+    ASSERT_EQ(element.GetNodeTag(), "tag")
+    ASSERT_EQ(element.GetNodeContent(), "content&ref;contents")
     return true;
 }
 
@@ -116,7 +138,7 @@ bool ContentCDATATest()
 
 bool EntityReferenceTest()
 {
-#define ENTITY_OK(Str, Char) i = 1;ASSERT_EQ(p.ParseEntityReference(Str, i), Char)
+#define ENTITY_OK(Str, Char) i = 1;ASSERT_EQ(p.ParseCharReference(Str, i), Char)
     XMLParser p;
     size_t i = 0;
     ENTITY_OK("&lt;", '<')
@@ -124,6 +146,20 @@ bool EntityReferenceTest()
     ENTITY_OK("&amp;", '&')
     ENTITY_OK("&apos;", '\'')
     ENTITY_OK("&quot;", '"')
+    return true;
+}
+
+bool DoctypeTest()
+{
+    ASSERT_NO_ERROR_PARSE_STRING("<?xml version=\"1.0\"?>\n"
+                                 "<!DOCTYPE student [\n"
+                                 "\t<!ELEMENT student (#PCDATA)> \n"
+                                 " \t<!ENTITY FullName \"\">\n"
+                                 "]>\n"
+                                 "\n"
+                                 "<student>My Name</student>");
+    auto s = document.FindFirstChildByTagName("student");
+    ASSERT_EQ(s.GetNodeContent(), "My Name");
     return true;
 }
 
@@ -277,7 +313,8 @@ void TestBind()
     testFunction["OneTagTest2"] = OneTagTest2;
     testFunction["OnePairTagTest"] = OnePairTagTest;
     testFunction["ContentTest"] = ContentTest;
-    testFunction["ContentEntityRefTest"] = ContentEntityRefTest;
+    testFunction["ContentCharRefTest"] = ContentCharRefTest;
+    testFunction["ContentReferenceTest"] = ContentReferenceTest;
     testFunction["TagSyntaxErrorTest"] = TagSyntaxErrorTest;
     testFunction["TagSpaceTest"] = TagSpaceTest;
     testFunction["TagBadCloseError"] = TagBadCloseError;
@@ -291,6 +328,8 @@ void TestBind()
     testFunction["MultiAttributeTest"] = MultiAttributeTest;
     testFunction["AttributeErrorTest"] = AttributeErrorTest;
 
+    testFunction["DOCTYPETest"] = DoctypeTest;
+
     testFunction["ContentCDATATest"] = ContentCDATATest;
 
     testFunction["FileOpenFailedTest"] = FileOpenFailedTest;
@@ -298,10 +337,9 @@ void TestBind()
 
     testFunction["EntityReferenceTest"] = EntityReferenceTest;
 }
-
+#define RED     "\033[31m"      /* Red */
 void Test()
 {
-    // TODO:结果彩色显示
     TestBind();
     auto isOK = true;
     std::vector<std::string> passTest, notPassTest;
