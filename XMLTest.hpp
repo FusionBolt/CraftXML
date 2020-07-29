@@ -8,39 +8,62 @@
 using namespace Craft;
 
 #ifndef _WIN32
-#define RED     "\033[31m"
-#define RESET   "\033[0m"
+    #define RED "\033[31m"
+    #define RESET "\033[0m"
 #else
-#define RED ""
-#define RESET ""
+    #define RED ""
+    #define RESET ""
 #endif
 
-#define DEBUG_INFO std::cout << "ErrorLine:" << __LINE__ << \
-                         " ErrorFunction:" << __FUNCTION__ << std::endl;
+#define DEBUG_INFO                                                             \
+    std::cout << "ErrorLine:" << __LINE__ << " ErrorFunction:" << __FUNCTION__ \
+              << std::endl;
 
-#define OUTPUT_DIFF_VAL(Val1, Val2) std::cout << "Expect Val:" << Val2 << "\nActual Val:" << Val1 << std::endl;
+#define OUTPUT_DIFF_VAL(Val1, Val2)                                            \
+    std::cout << "Expect Val:" << Val2 << "\nActual Val:" << Val1 << std::endl;
 
-#define ERROR_INFO(Val1, Val2) std::cout << RED << "-----------------------------------" << std::endl; \
-                                OUTPUT_DIFF_VAL(Val1, Val2)\
-                                DEBUG_INFO;\
-                                std::cout << "-----------------------------------" << RESET << std::endl;
+#define ERROR_INFO(Val1, Val2)                                                 \
+    std::cout << RED << "-----------------------------------" << std::endl;    \
+    OUTPUT_DIFF_VAL(Val1, Val2)                                                \
+    DEBUG_INFO;                                                                \
+    std::cout << "-----------------------------------" << RESET << std::endl;
 
-#define ERROR_STR_OUTPUT(InputStr) std::cout << "Error Str:" << InputStr << "\nParseErrorType:" <<\
-                         result.ErrorInfo() << std::endl;DEBUG_INFO;
+#define ERROR_STR_OUTPUT(InputStr)                                             \
+    std::cout << "Error Str:" << InputStr                                      \
+              << "\nParseErrorType:" << result.ErrorInfo() << std::endl;       \
+    DEBUG_INFO;
 
-#define ASSERT_EQ(Val1, Val2) if(Val1 != Val2) {ERROR_INFO(Val1, Val2);return false;}
-#define ASSERT_NOT_EQ(Val1, Val2) if(Val1 == Val2) {ERROR_INFO(Val1, Val2);return false;}
+#define ASSERT_EQ(Val1, Val2)                                                  \
+    if (Val1 != Val2)                                                          \
+    {                                                                          \
+        ERROR_INFO(Val1, Val2);                                                \
+        return false;                                                          \
+    }
+#define ASSERT_NOT_EQ(Val1, Val2)                                              \
+    if (Val1 == Val2)                                                          \
+    {                                                                          \
+        ERROR_INFO(Val1, Val2);                                                \
+        return false;                                                          \
+    }
 #define ASSERT_TRUE(Val1) ASSERT_EQ(Val1, true)
 #define ASSERT_FALSE(Val1) ASSERT_NOT_EQ(Val1, true)
 
-#define LOAD_PARSE_STRING(str, parseStatus) XMLDocument document;\
-                                            auto result = document.LoadString(str);\
-                                            if(result._status != parseStatus)\
-                                            {ERROR_STR_OUTPUT(str); return false;}
+#define LOAD_PARSE_STRING(str, parseStatus)                                    \
+    XMLDocument document;                                                      \
+    auto result = document.LoadString(str);                                    \
+    if (result._status != parseStatus)                                         \
+    {                                                                          \
+        ERROR_STR_OUTPUT(str);                                                 \
+        return false;                                                          \
+    }
 
-#define ASSERT_PARSE_STRING(str, parseStatus) {LOAD_PARSE_STRING(str, parseStatus);}
+#define ASSERT_PARSE_STRING(str, parseStatus)                                  \
+    {                                                                          \
+        LOAD_PARSE_STRING(str, parseStatus);                                   \
+    }
 
-#define ASSERT_NO_ERROR_PARSE_STRING(str) LOAD_PARSE_STRING(str, XMLParser::NoError)
+#define ASSERT_NO_ERROR_PARSE_STRING(str)                                      \
+    LOAD_PARSE_STRING(str, XMLParser::NoError)
 
 bool NodeStructTest()
 {
@@ -81,7 +104,7 @@ bool OneTagTest2()
     ASSERT_NO_ERROR_PARSE_STRING("<tag attr=\"test\" />");
     auto attr = document.FirstChild().GetNodeAttributes();
     ASSERT_TRUE(!attr.empty())
-    ASSERT_EQ(attr["attr"], "test1")
+    ASSERT_EQ(attr["attr"], "test")
     return true;
 }
 
@@ -121,15 +144,17 @@ bool ContentReferenceTest()
 
 bool ContentCDATATest()
 {
-    ASSERT_NO_ERROR_PARSE_STRING("<script>text1\n"
-                                 "<![CDATA["
-                                 "<message> Welcome to TutorialsPoint </message>"
-                                 "]]>text2"
-                                 "</script>")
+    ASSERT_NO_ERROR_PARSE_STRING(
+        "<script>text1\n"
+        "<![CDATA["
+        "<message> Welcome to TutorialsPoint </message>"
+        "]]>text2"
+        "</script>")
     auto scriptNode = document.FindFirstChildByTagName("script");
     ASSERT_EQ(scriptNode.GetNodeContent(), "text1\n")
-    ASSERT_EQ(scriptNode.FindFirstChildByType(XMLNode::NodeCData).GetNodeContent(),
-              "<message> Welcome to TutorialsPoint </message>");
+    ASSERT_EQ(
+        scriptNode.FindFirstChildByType(XMLNode::NodeCData).GetNodeContent(),
+        "<message> Welcome to TutorialsPoint </message>");
     auto dataNode = scriptNode.FindChildrenByType(XMLNode::NodeData);
     ASSERT_EQ(dataNode[0].GetNodeContent(), "text1\n")
     ASSERT_EQ(dataNode[1].GetNodeContent(), "text2")
@@ -138,7 +163,9 @@ bool ContentCDATATest()
 
 bool EntityReferenceTest()
 {
-#define ENTITY_OK(Str, Char) i = 1;ASSERT_EQ(p.ParseCharReference(Str, i), Char)
+#define ENTITY_OK(Str, Char) i = 1;
+
+    ASSERT_EQ(p.ParseCharReference(Str, i), Char)
     XMLParser p;
     size_t i = 0;
     ENTITY_OK("&lt;", '<')
@@ -172,17 +199,18 @@ bool CommentTest()
 
 bool CommentSyntaxErrorTest()
 {
-     ASSERT_PARSE_STRING("<!-- B+, B, or B--->", Craft::XMLParser::CommentSyntaxError)
-     return true;
+    ASSERT_PARSE_STRING("<!-- B+, B, or B--->",
+                        Craft::XMLParser::CommentSyntaxError)
+    return true;
 }
 
 bool DeclarationTest()
 {
-     ASSERT_NO_ERROR_PARSE_STRING("<?xml version=\"1.0\" standalone='yes'?>")
-     auto attributes = document.FirstChild().GetNodeAttributes();
-     ASSERT_EQ(attributes["version"], "1.0")
-     ASSERT_EQ(attributes["standalone"], "yes")
-     return true;
+    ASSERT_NO_ERROR_PARSE_STRING("<?xml version=\"1.0\" standalone='yes'?>")
+    auto attributes = document.FirstChild().GetNodeAttributes();
+    ASSERT_EQ(attributes["version"], "1.0")
+    ASSERT_EQ(attributes["standalone"], "yes")
+    return true;
 }
 
 bool DeclarationErrorTest()
@@ -197,9 +225,9 @@ bool DeclarationErrorTest()
 bool PrologTest()
 {
     ASSERT_NO_ERROR_PARSE_STRING("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
-                "<?welcome to pg=10 of tutorials point?>")
+                                 "<?welcome to pg=10 of tutorials point?>")
     ASSERT_EQ(document.FindFirstChildByTagName("welcome").GetNodeContent(),
-            "to pg=10 of tutorials point")
+              "to pg=10 of tutorials point")
     auto attrs = document.FindFirstChildByTagName("").GetNodeAttributes();
     ASSERT_EQ(attrs["version"], "1.0")
     ASSERT_EQ(attrs["encoding"], "UTF-8")
@@ -209,7 +237,7 @@ bool PrologTest()
 bool PrologErrorTest()
 {
     ASSERT_PARSE_STRING("<?welcome to pg=10 of tutorials point?>\n"
-                      "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+                        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
                         Craft::XMLParser::DeclarationPositionError)
     return true;
 }
@@ -234,7 +262,8 @@ bool AttributeQuoteTest()
 
 bool MultiAttributeTest()
 {
-    ASSERT_NO_ERROR_PARSE_STRING(R"(<tag attr = "first"   att ="second" at= "third"></tag>)")
+    ASSERT_NO_ERROR_PARSE_STRING(
+        R"(<tag attr = "first"   att ="second" at= "third"></tag>)")
     auto attr = document.FirstChild().GetNodeAttributes();
     ASSERT_EQ(attr.size(), 3)
     ASSERT_EQ(attr["attr"], "first")
@@ -245,11 +274,13 @@ bool MultiAttributeTest()
 
 bool AttributeErrorTest()
 {
-#define ATTRIBUTE_ERROR_TEST(str) ASSERT_PARSE_STRING(str, XMLParser::AttributeSyntaxError)
+#define ATTRIBUTE_ERROR_TEST(str)                                              \
+    ASSERT_PARSE_STRING(str, XMLParser::AttributeSyntaxError)
     ATTRIBUTE_ERROR_TEST("<tag a></tag>)")
     ATTRIBUTE_ERROR_TEST("<tag attr=att></tag>")
     ATTRIBUTE_ERROR_TEST("<tag att%r=\"att\"></tag>")
-    ASSERT_PARSE_STRING(R"(<tag attr="first" attr="second"></tag>)", XMLParser::AttributeRepeatError)
+    ASSERT_PARSE_STRING(R"(<tag attr="first" attr="second"></tag>)",
+                        XMLParser::AttributeRepeatError)
     return true;
 }
 
@@ -277,10 +308,12 @@ bool TagSyntaxErrorTest()
 
 bool TagNotMatchedErrorTest()
 {
-   ASSERT_PARSE_STRING("<address>This is wrong syntax</Address>", XMLParser::TagNotMatchedError);
-   ASSERT_PARSE_STRING("<tag><newTag></newTa></tag>", XMLParser::TagNotMatchedError);
-   ASSERT_PARSE_STRING("<tag>content", XMLParser::TagNotMatchedError);
-   return true;
+    ASSERT_PARSE_STRING("<address>This is wrong syntax</Address>",
+                        XMLParser::TagNotMatchedError);
+    ASSERT_PARSE_STRING("<tag><newTag></newTa></tag>",
+                        XMLParser::TagNotMatchedError);
+    ASSERT_PARSE_STRING("<tag>content", XMLParser::TagNotMatchedError);
+    return true;
 }
 
 bool TagBadCloseError()
@@ -337,15 +370,15 @@ void TestBind()
 
     testFunction["EntityReferenceTest"] = EntityReferenceTest;
 }
-#define RED     "\033[31m"      /* Red */
+#define RED "\033[31m" /* Red */
 void Test()
 {
     TestBind();
     auto isOK = true;
     std::vector<std::string> passTest, notPassTest;
-    for(const auto& v : testFunction)
+    for (const auto &v : testFunction)
     {
-        if(v.second())
+        if (v.second())
         {
             std::cout << "Pass Test:" << v.first << std::endl;
             passTest.push_back(v.first);
@@ -360,7 +393,7 @@ void Test()
 
     std::cout << "Pass Test:" << passTest.size() << std::endl;
     std::cout << "Not Pass Test:" << notPassTest.size() << std::endl;
-    if(isOK)
+    if (isOK)
     {
         std::cout << "All Test Pass" << std::endl;
     }
