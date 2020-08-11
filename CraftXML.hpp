@@ -14,6 +14,8 @@
 #include <utility>
 #include <vector>
 
+#include "MemoryPool.hpp"
+
 namespace Craft
 {
     class XMLNodeIterator;
@@ -29,11 +31,7 @@ namespace Craft
 
         friend class XMLNodeIterator;
 
-        XMLNode(std::shared_ptr<XMLNodeStruct> node) : _node(std::move(node)) {}
-
-        XMLNode(const std::weak_ptr<XMLNodeStruct> &node) : _node(node.lock())
-        {
-        }
+        XMLNode(XMLNodeStruct* node) : _node(node) {}
 
     public:
         enum NodeType
@@ -51,9 +49,9 @@ namespace Craft
         using Iterator = XMLNodeIterator;
         using XMLNodes = std::vector<XMLNode>;
 
-        XMLNode(std::string tag = "", std::string content = "",
+        XMLNode(const std::string& tag = "", const std::string& content = "",
                 NodeType type = NodeElement) :
-            _node(new XMLNodeStruct(std::move(tag), std::move(content), type))
+            _node(memPool.New(tag, content, type))
         {
         }
 
@@ -91,7 +89,7 @@ namespace Craft
             {
                 child._node->_prev = _node->_lastChild->_prev;
                 child._node->_next = _node->_lastChild;
-                _node->_lastChild->_prev.lock()->_next = child._node;
+                _node->_lastChild->_prev->_next = child._node;
                 _node->_lastChild->_prev = child._node;
             }
             child._node->_parent = _node;
@@ -148,7 +146,7 @@ namespace Craft
         // Node Accessor
         [[nodiscard]] XMLNode GetParent() const noexcept
         {
-            return XMLNode(_node->_parent.lock());
+            return XMLNode(_node->_parent);
         }
 
         [[nodiscard]] XMLNode NextSibling() const
@@ -159,8 +157,8 @@ namespace Craft
 
         [[nodiscard]] XMLNode PrevSibling() const
         {
-            return _node->_prev.lock() != _node->_lastChild ? _node->_next
-                                                            : XMLNode(NullNode);
+            return _node->_prev != _node->_lastChild ? _node->_next
+                                                     : XMLNode(NullNode);
         }
 
         [[nodiscard]] XMLNodes operator[](const std::string &TagName) const
@@ -177,8 +175,8 @@ namespace Craft
         [[nodiscard]] XMLNode LastChild() const
         {
             return _node->_firstChild != _node->_lastChild
-                       ? _node->_lastChild->_prev
-                       : XMLNode(NullNode);
+                   ? _node->_lastChild->_prev
+                   : XMLNode(NullNode);
         }
 
         [[nodiscard]] XMLNode
@@ -253,11 +251,11 @@ namespace Craft
 
             XMLNodeStruct(
                 std::string tag, std::string content, NodeType type,
-                const std::shared_ptr<XMLNodeStruct> &parent = nullptr) :
+                XMLNodeStruct* parent = nullptr) :
                 _tag(std::move(tag)),
                 _content(std::move(content)), _type(type), _parent(parent),
                 _prev(), _next(nullptr),
-                _firstChild(std::make_shared<XMLNodeStruct>())
+                _firstChild(memPool.New())
             {
                 _lastChild = _firstChild;
                 _lastChild->_type = NullNode;
@@ -273,14 +271,16 @@ namespace Craft
             std::map<std::string, std::string> _attributes;
             std::string _tag, _content;
             NodeType _type;
-            std::weak_ptr<XMLNodeStruct> _parent;
-            std::shared_ptr<XMLNodeStruct> _firstChild;
-            std::shared_ptr<XMLNodeStruct> _lastChild;
-            std::weak_ptr<XMLNodeStruct> _prev;
-            std::shared_ptr<XMLNodeStruct> _next;
+            XMLNodeStruct *_parent;
+            XMLNodeStruct *_firstChild;
+            XMLNodeStruct *_lastChild;
+            XMLNodeStruct *_prev;
+            XMLNodeStruct *_next;
         };
 
-        std::shared_ptr<XMLNodeStruct> _node;
+        inline static MemoryPool<XMLNodeStruct> memPool;
+
+        XMLNodeStruct *_node;
     };
 
     class XMLNodeIterator
@@ -308,7 +308,7 @@ namespace Craft
 
         XMLNodeIterator operator--()
         {
-            _root._node = _root._node->_prev.lock();
+            _root._node = _root._node->_prev;
             return *this;
         }
 
@@ -322,12 +322,12 @@ namespace Craft
 
     XMLNode::Iterator XMLNode::begin() noexcept
     {
-        return Craft::XMLNode::Iterator(_node->_firstChild);
+        return XMLNode::Iterator(_node->_firstChild);
     }
 
     XMLNode::Iterator XMLNode::end() noexcept
     {
-        return Craft::XMLNode::Iterator(_node->_lastChild);
+        return XMLNode::Iterator(_node->_lastChild);
     }
 
     class XMLParser
@@ -920,7 +920,7 @@ namespace Craft
                 ++i;
                 return;
             }
-            // tag end by >
+                // tag end by >
             else if (contents[i] == '>')
             {
                 current.AddChild(newNode);
