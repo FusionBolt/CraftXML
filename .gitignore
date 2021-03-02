@@ -3,3 +3,4 @@ cmake-build-debug
 todo.md
 test.xml
 main.cpp
+CMakeLists.txt

@@ -3,7 +3,7 @@
 //
 #include <iostream>
 
-#include "CraftXML.hpp"
+#include "../lib/CraftXML.hpp"
 
 using namespace Craft;
 

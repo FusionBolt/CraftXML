@@ -4,7 +4,7 @@ a simple xml parser library
 
 ## Install
 
-Don't need install, only put the XML.hpp into your project
+Don't need install, only put the file in lib into your project and include CraftXML.hpp
 
 ## benchmark
 
